@@ -1,0 +1,22 @@
+# RQ-SpecDecode: core dependencies
+# Install: pip install -r requirements.txt
+# Note: PyTorch with CUDA must be installed first (see environment.yaml)
+
+# ── Core ──
+torch>=2.4.0
+transformers>=4.40.0
+bitsandbytes>=0.43.0
+datasets>=3.0.0
+accelerate>=1.0.0
+
+# ── Attention kernels ──
+triton>=3.0.0
+xformers>=0.0.28
+
+# ── Experiments & visualization ──
+matplotlib>=3.8.0
+numpy>=1.26.0
+scipy>=1.12.0
+
+# ── Custom CUDA kernels (install separately) ──
+# cd flash/splitk_kernels && pip install -e .

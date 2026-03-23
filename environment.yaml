@@ -1,0 +1,44 @@
+# RQ-SpecDecode conda environment
+# Recreate: conda env create -f environment.yaml
+# Activate: conda activate rq-specdecode
+#
+# Tested on: A100 PCIe 40GB, CUDA driver 535, Python 3.10
+
+name: rq-specdecode
+channels:
+  - pytorch
+  - nvidia
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+
+  - pip:
+    # ── PyTorch (CUDA 12.8) ──
+    # Install via: pip install torch --index-url https://download.pytorch.org/whl/cu128
+    - torch>=2.4.0
+    - triton>=3.0.0
+
+    # ── HuggingFace ──
+    - transformers>=4.40.0
+    - datasets>=3.0.0
+    - accelerate>=1.0.0
+
+    # ── Quantization ──
+    - bitsandbytes>=0.43.0
+
+    # ── Attention kernels ──
+    - xformers>=0.0.28
+
+    # ── Experiment & visualization ──
+    - matplotlib>=3.8.0
+    - numpy>=1.26.0
+    - scipy>=1.12.0
+
+# ── Post-install steps ──
+# 1. Install CUDA attention kernels:
+#    cd flash/splitk_kernels && pip install -e .
+#
+# 2. (Optional) Install VQLLM for codebook training:
+#    cd VQLLM && pip install -e .
