@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+*.so
+build/
+dist/
+*.whl
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# Results & artifacts (optional: add specific result files to git)
+results/*.json
+results/*.png
+results/*.pdf
+
+# VQLLM (submodule or separate repo)
+VQLLM/
+
+# KIVI (vendored reference)
+flash/KIVI/
+
+# Compiled CUDA extensions
+flash/splitk_kernels/build/
+flash/splitk_kernels/*.egg-info/
+flash/splitk_kernels/_C*.so
+
+# Large files
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vim/Editor swap files
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+wandb/
+
+# Temporary
+/tmp/
+*.tmp
+
+# Torch profiler traces
+*.trace.json
