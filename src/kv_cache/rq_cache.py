@@ -60,36 +60,76 @@ class RQKVCache:
         self.initialized = False
 
     def load_codebooks(self, checkpoint_path, num_kv_heads=8, head_dim=128):
-        """VQLLM 체크포인트에서 codebook 로드."""
+        """VQLLM 체크포인트에서 codebook 로드.
+
+        Args:
+            checkpoint_path: .pt 파일 경로 또는 디렉토리 경로
+                - 디렉토리: hf_model001.pt + hf_model002.pt 자동 로드
+                - 파일: meta_model.pt 또는 단일 .pt 파일
+            num_kv_heads: KV head 수 (Llama-2-7B: 32, Llama-3-8B GQA: 8)
+            head_dim: head dimension (보통 128)
+        """
+        import os
         print(f"Loading RQ codebooks from {checkpoint_path}...")
-        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+        # 디렉토리면 multi-file HF 체크포인트
+        if os.path.isdir(checkpoint_path):
+            ckpt = {}
+            pt_files = sorted(f for f in os.listdir(checkpoint_path)
+                              if f.endswith(".pt") and "model" in f)
+            for f in pt_files:
+                part = torch.load(os.path.join(checkpoint_path, f),
+                                  map_location="cpu", weights_only=False)
+                ckpt.update(part)
+                print(f"  Loaded {f}: {len(part)} keys")
+        else:
+            ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
 
-        # Parse structure from checkpoint keys
+        # Parse structure — 자동 감지 (HF: model.layers.X, meta: layers.X)
         key_stages = set()
         value_stages = set()
         pq_codebooks = set()
         layers = set()
 
+        # 두 형식 모두 매칭
+        patterns = [
+            r"(?:model\.)?layers\.(\d+)\.(?:self_attn|attention)\.quantizer\.(key|value)\.(\d+)\.codebooks\.(\d+)\.",
+        ]
+
+        self._key_prefix = None  # 키 prefix 저장 (로딩 시 사용)
         for k in ckpt.keys():
-            m = re.match(
-                r"layers\.(\d+)\.attention\.quantizer\.(key|value)\.(\d+)\.codebooks\.(\d+)\.", k)
-            if m:
-                layers.add(int(m.group(1)))
-                if m.group(2) == "key":
-                    key_stages.add(int(m.group(3)))
-                else:
-                    value_stages.add(int(m.group(3)))
-                pq_codebooks.add(int(m.group(4)))
+            for pat in patterns:
+                m = re.match(pat, k)
+                if m:
+                    layers.add(int(m.group(1)))
+                    if m.group(2) == "key":
+                        key_stages.add(int(m.group(3)))
+                    else:
+                        value_stages.add(int(m.group(3)))
+                    pq_codebooks.add(int(m.group(4)))
+                    # Detect prefix
+                    if self._key_prefix is None:
+                        if k.startswith("model."):
+                            self._key_prefix = "model.layers.{l}.attention.quantizer"
+                        else:
+                            self._key_prefix = "layers.{l}.attention.quantizer"
+                    break
+
+        if not layers:
+            raise ValueError("No codebook keys found in checkpoint. "
+                             "Expected pattern: [model.]layers.X.attention.quantizer.key.Y.codebooks.Z.weight")
 
         self.num_layers = max(layers) + 1
         self.num_stages_key = len(key_stages)
         self.num_stages_value = len(value_stages)
         self.num_pq_codebooks = max(pq_codebooks) + 1
 
-        sample_key = f"layers.0.attention.quantizer.key.0.codebooks.0.weight"
+        # Find sample codebook
+        prefix_0 = self._key_prefix.format(l=0)
+        sample_key = f"{prefix_0}.key.0.codebooks.0.weight"
         self.codebook_size = ckpt[sample_key].shape[0]
         self.codebook_dim = ckpt[sample_key].shape[1]
 
@@ -103,7 +143,11 @@ class RQKVCache:
         print(f"  Codebook dtype: {ckpt[sample_key].dtype}")
         print(f"  KV structure: {num_kv_heads} heads × {head_dim} dim = {total_kv_dim}")
 
-        # Load codebooks and gains
+        # Load codebooks and gains (using detected prefix)
+        def _ckpt_key(l, kv_type, stage, suffix):
+            prefix = self._key_prefix.format(l=l)
+            return f"{prefix}.{kv_type}.{stage}.{suffix}"
+
         for l in range(self.num_layers):
             layer_key_cbs = []
             layer_val_cbs = []
@@ -113,13 +157,13 @@ class RQKVCache:
             for s in range(self.num_stages_key):
                 stage_cbs = []
                 stage_gains = []
-                gains_key = f"layers.{l}.attention.quantizer.key.{s}.gains"
+                gains_key = _ckpt_key(l, "key", s, "gains")
                 gains_tensor = ckpt.get(gains_key)
                 if gains_tensor is not None:
                     gains_tensor = gains_tensor.float().to(self.device)
 
                 for cb in range(self.num_pq_codebooks):
-                    cb_key = f"layers.{l}.attention.quantizer.key.{s}.codebooks.{cb}.weight"
+                    cb_key = _ckpt_key(l, "key", s, f"codebooks.{cb}.weight")
                     cb_tensor = ckpt[cb_key].float().to(self.device)
                     stage_cbs.append(cb_tensor)
                     if gains_tensor is not None:
@@ -133,13 +177,13 @@ class RQKVCache:
             for s in range(self.num_stages_value):
                 stage_cbs = []
                 stage_gains = []
-                gains_key = f"layers.{l}.attention.quantizer.value.{s}.gains"
+                gains_key = _ckpt_key(l, "value", s, "gains")
                 gains_tensor = ckpt.get(gains_key)
                 if gains_tensor is not None:
                     gains_tensor = gains_tensor.float().to(self.device)
 
                 for cb in range(self.num_pq_codebooks):
-                    cb_key = f"layers.{l}.attention.quantizer.value.{s}.codebooks.{cb}.weight"
+                    cb_key = _ckpt_key(l, "value", s, f"codebooks.{cb}.weight")
                     cb_tensor = ckpt[cb_key].float().to(self.device)
                     stage_cbs.append(cb_tensor)
                     if gains_tensor is not None:

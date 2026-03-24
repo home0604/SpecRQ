@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from transformers import DynamicCache
 
-from kv_cache import HierarchicalKVCache
+from src.kv_cache.hierarchical import HierarchicalKVCache
 
 
 def _past_to_tuple(past_key_values):

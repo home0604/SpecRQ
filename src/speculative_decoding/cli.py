@@ -18,6 +18,9 @@ QuantSpec: Self-Speculative Decoding with Hierarchical Quantized KV Cache
 
 import argparse
 
+import sys, os
+sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from benchmark import run_benchmark, run_sanity_check
 
 
