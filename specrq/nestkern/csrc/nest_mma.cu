@@ -369,7 +369,9 @@ torch::Tensor nest_mma(torch::Tensor x, torch::Tensor codes, torch::Tensor codeb
                   codes.size(1) == N * K / 8, "codes must be uint8 [L, N*K/8] in mma_tile_v1 order");
   const int L = codes.size(0);
   TORCH_CHECK(k >= 1 && k <= L, "k out of range");
-  TORCH_CHECK(codebooks.sizes() == torch::IntArrayRef({L, 256, 8}) && codebooks.is_contiguous(), "codebooks [L,256,8]");
+  // codebooks may be the target's [L, 256, 8] or a separate draft set [k_d, 256, 8] (only planes < k are read)
+  TORCH_CHECK(codebooks.dim() == 3 && codebooks.size(0) >= k && codebooks.size(1) == 256 && codebooks.size(2) == 8 &&
+                  codebooks.is_contiguous(), "codebooks must be contiguous [>=k, 256, 8]");
   TORCH_CHECK(scales.numel() == N && scales.is_contiguous(), "scales [N]");
   TORCH_CHECK(x.scalar_type() == codebooks.scalar_type() && x.scalar_type() == scales.scalar_type(), "dtype mismatch");
   TORCH_CHECK(counters.scalar_type() == at::kInt && counters.is_cuda(), "counters int32 CUDA");

@@ -249,7 +249,9 @@ torch::Tensor nest_gemv(torch::Tensor x, torch::Tensor codes, torch::Tensor code
   TORCH_CHECK(k >= 1 && k <= L, "k=", k, " out of range for L=", L);
   TORCH_CHECK(K % 32 == 0, "K must be a multiple of 32");
   TORCH_CHECK(x.numel() == K, "nest_gemv is the M=1 path: x must have K elements (got ", x.numel(), ")");
-  TORCH_CHECK(codebooks.sizes() == torch::IntArrayRef({L, 256, 8}), "codebooks must be [L, 256, 8]");
+  // codebooks may be the target's [L, 256, 8] or a separate draft set [k_d, 256, 8] (only planes < k are read)
+  TORCH_CHECK(codebooks.dim() == 3 && codebooks.size(0) >= k && codebooks.size(1) == 256 && codebooks.size(2) == 8 &&
+                  codebooks.is_contiguous(), "codebooks must be contiguous [>=k, 256, 8]");
   TORCH_CHECK(scales.numel() == N, "scales must have N elements");
   TORCH_CHECK(x.scalar_type() == codebooks.scalar_type() && x.scalar_type() == scales.scalar_type(),
               "x, codebooks, scales must share dtype");
