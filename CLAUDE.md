@@ -13,6 +13,8 @@ codebooks; the **draft** uses the first `k` (prefix), optionally with a draft-on
   (01 research questions/criteria, 02 weight design & training, **03 experiment plan = the only live
   experiment list (E0–E7)**, 04 KV/serving extension, 90 references + old plan).
 - Start config **C1**: d=8, K=256, L=5 (5 bit/weight target), draft k=3 → 2, q=16 → 8/4. C2: d=8, K=4096, L=2.
+- Calibration (decided 2026-11-05): Llama main runs use **pile-val-backup** (local cache, disjoint from eval wikitext2/c4);
+  Qwen runs that compare against the DbD paper use wikitext2 1024×4096 like `quantize.sh`.
 - Models: Qwen2.5-0.5B-Instruct (pipeline check) → Llama-3.1-8B-Instruct (main). Training base: Drop-by-Drop-style
   prefix-aware additive-codebook (AQ) learning, not pure RQ.
 - Success = measured end-to-end confirmed tokens/s vs. **optimized AR of the same VQ target**, under a target-quality
