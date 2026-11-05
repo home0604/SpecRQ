@@ -49,6 +49,17 @@ Git: repo initialized 2026-11-05 (`VQLLM/` is its own upstream clone and is git-
 
 Keep upstream changes inside `VQLLM/` minimal and deliberate; put new code in `specrq/` and `experiments/`.
 
+## Workflow (supervisor / executor)
+
+- The user talks only to the main session (supervisor). It scopes tasks, verifies executor claims itself, commits,
+  and updates Notion 03 at stage ends or decision changes. Executors follow `.claude/agents/executor.md`
+  (no commits, `[V]/[I]` reports, ask before irreversible actions).
+- Long jobs run in tmux: `tools/run_tmux.sh <name> <gpus|none> <env> -- <cmd...>` → session `sr-<name>`,
+  log/meta/runner in `/data/lsh/logs/<name>.{log,meta.json,sh}`. `tools/jobs.sh` lists jobs and GPU usage.
+- Result records: `tools/results.py::save_result` → `results/<E#>/<run>.json` with commit, versions, model revision.
+- Weight-VQ env: `nestvq` (separate from `VQLLM_CUDA`). Code: `specrq/dbd/` (vendored Drop-by-Drop/AQLM mirror,
+  original at `/data/lsh/src/DropbyDrop2026` — keep it).
+
 ## Environment
 
 ```bash
