@@ -36,7 +36,19 @@ class QuantizedLinear(nn.Module):
         signs = getattr(self, "rotation_signs", None)
         if signs is not None:
             input = rotate_input(input, signs, getattr(self, "hadamard_block_size", 1))
-        weight = self.quantized_weight(num_codebooks=getattr(self, "active_num_codebooks", None))
+        k = getattr(self, "active_num_codebooks", None)
+        draft_codebooks = getattr(self, "draft_codebooks", None)
+        if draft_codebooks is not None and k is not None and k == getattr(self, "draft_k", None):
+            # [specrq] draft path: shared first-k codes, draft-only codebook/scale copies (src/draft.py)
+            qw = self.quantized_weight
+            transform = getattr(self, "draft_codebook_transform", None)  # e.g. STE fake-quant to q bits
+            if transform is not None:
+                draft_codebooks = transform(draft_codebooks)
+            weight = _dequantize_weight(
+                qw.get_codes()[..., :k], draft_codebooks.to(qw.codebooks.dtype), self.draft_scales.to(qw.codebooks.dtype)
+            )
+        else:
+            weight = self.quantized_weight(num_codebooks=k)
         return F.linear(input, weight, self.bias)
 
     def forward(self, input: torch.Tensor):

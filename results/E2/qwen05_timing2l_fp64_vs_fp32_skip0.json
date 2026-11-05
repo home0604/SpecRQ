@@ -1,0 +1,95 @@
+{
+ "exp": "E2",
+ "run": "qwen05_timing2l_fp64_vs_fp32_skip0",
+ "time": "2026-11-05T19:22:33",
+ "commit": "1c6813a",
+ "dirty_files": 11,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "setting": "DbD quantize.sh + Had + 35W, first 2 layers; alpha=0 prefixes skipped",
+  "runs": {
+   "fp64_noskip(prev)": "/data/lsh/ckpts/weightvq/timing/qwen05_c1_had35w_2layers",
+   "fp64_skip": "/data/lsh/ckpts/weightvq/timing/qwen05_c1_had35w_2l_fp64_skip0",
+   "fp32_skip": "/data/lsh/ckpts/weightvq/timing/qwen05_c1_had35w_2l_fp32_skip0"
+  },
+  "gpus": {
+   "fp64_skip": 0,
+   "fp32_skip": 3
+  },
+  "logs": [
+   "/data/lsh/logs/e2_qwen05_timing2l_fp64_skip0.log",
+   "/data/lsh/logs/e2_qwen05_timing2l_fp32_skip0.log",
+   "/data/lsh/logs/e2_codes_fp64_vs_fp32.txt",
+   "/data/lsh/logs/e2_codes_fp64_vs_fp64.txt"
+  ],
+  "unit_test": "experiments/04_speed/test_skip_zero_alpha.py"
+ },
+ "metrics": {
+  "layer_time_s": {
+   "fp64_noskip": [
+    761.5,
+    671.9
+   ],
+   "fp64_skip": [
+    613.9,
+    600.0
+   ],
+   "fp32_skip": [
+    359.2,
+    343.3
+   ]
+  },
+  "wall_s": {
+   "fp64_noskip": 1478,
+   "fp64_skip": 1266,
+   "fp32_skip": 748
+  },
+  "out_loss": {
+   "fp64_noskip": [
+    0.003211,
+    0.0014716
+   ],
+   "fp64_skip": [
+    0.0031968,
+    0.001482
+   ],
+   "fp32_skip": [
+    0.0032106,
+    0.0015047
+   ]
+  },
+  "out_val_loss": {
+   "fp64_noskip": [
+    0.003169,
+    0.001459
+   ],
+   "fp64_skip": [
+    0.0031501,
+    0.0014699
+   ],
+   "fp32_skip": [
+    0.0031682,
+    0.0014911
+   ]
+  },
+  "code_agreement_mean": {
+   "fp64_skip_vs_fp32_skip": 0.4400403616683824,
+   "fp64_skip_vs_fp64_noskip(noise baseline)": 0.3944722371441977
+  },
+  "skip_unit_test": "loss and grads bit-equal (q_proj, down_proj); end-to-end quantize() nondeterministic even for identical code (old vs old2 code agreement 0.69/0.45)"
+ },
+ "notes": ""
+}

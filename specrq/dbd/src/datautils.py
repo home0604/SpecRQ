@@ -40,6 +40,39 @@ def get_red_pajama(nsamples, seqlen, tokenizer, eval_mode=False):
     return trainloader
 
 
+PILE_VAL_JSONL = os.environ.get("SPECRQ_PILE_VAL_JSONL", "/data/lsh/datasets/pile_val/val.jsonl")
+# [specrq] source: HF mit-han-lab/pile-val-backup @ 2f5e46ae6a69cf0dce4b12f78241c408936ca0e4, val.jsonl.zst
+# (sha256 264c875d...), decompressed with zstd to the path above (214,670 documents).
+
+
+def get_pile_val(nsamples, seqlen, tokenizer, eval_mode=False, seed=0, heldout=False):
+    """[specrq] Calibration windows from the Pile validation set (AWQ's pile-val-backup), local file only.
+    Documents are shuffled with a fixed seed and joined with "\n\n" (as in the wikitext2 loader) until the stream has
+    at least nsamples * seqlen tokens; the stream is cut into consecutive non-overlapping windows of seqlen tokens.
+    Tokenizer BOS/EOS settings are left at the tokenizer defaults (unlike the RedPajama loader)."""
+    assert not eval_mode, "pile_val is a calibration-only dataset"
+    import json
+
+    with open(PILE_VAL_JSONL) as f:
+        texts = [json.loads(line)["text"] for line in f]
+    order = list(range(len(texts)))
+    random.Random(seed).shuffle(order)
+    if heldout:  # [specrq] draft-training data: same shuffle read from the other end -> disjoint from calibration docs
+        order = order[::-1]
+    need = nsamples * seqlen
+    ids, n_docs, chunk = [], 0, 256
+    while len(ids) < need and n_docs < len(order):
+        batch = [texts[i] for i in order[n_docs : n_docs + chunk]]
+        prefix = "\n\n" if n_docs > 0 else ""
+        enc = tokenizer(prefix + "\n\n".join(batch), add_special_tokens=(n_docs == 0)).input_ids
+        ids.extend(enc)
+        n_docs += len(batch)
+    assert len(ids) >= need, f"pile_val too small: {len(ids)} tokens < {need}"
+    stream = torch.tensor(ids[:need], dtype=torch.long)
+    print(f"pile_val{'_heldout' if heldout else ''}: {n_docs} docs, {len(ids)} tokens tokenized, using {need} as {nsamples} x {seqlen} windows (no overlap)")
+    return [stream[i * seqlen : (i + 1) * seqlen].unsqueeze(0) for i in range(nsamples)]
+
+
 def get_wikitext2(nsamples, seqlen, tokenizer, eval_mode=False):
     if not eval_mode:
         traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
@@ -229,6 +262,10 @@ def get_loaders(
 
         if name.lower() == "wikitext2":
             data = get_wikitext2(nsamples, seqlen, tokenizer, eval_mode=eval_mode)
+        elif name.lower() == "pile_val":
+            data = get_pile_val(nsamples, seqlen, tokenizer, eval_mode=eval_mode, seed=seed)
+        elif name.lower() == "pile_val_heldout":
+            data = get_pile_val(nsamples, seqlen, tokenizer, eval_mode=eval_mode, seed=seed, heldout=True)
         elif name.lower() == "pajama":
             data = get_red_pajama(nsamples, seqlen, tokenizer, eval_mode=eval_mode)
         elif name.lower() == "ptb":

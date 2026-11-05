@@ -10,6 +10,7 @@ from tqdm import trange
 from tqdm.auto import trange
 from transformers import PreTrainedModel
 
+import aq_engine as aq_engine_module
 from aq_engine import AQEngine
 from src.aq import QuantizedLinear
 from src.datautils import get_loaders
@@ -697,6 +698,13 @@ def main():
         help="Drop-by-Drop Matryoshka weights alpha_k for prefixes k=1..num_codebooks (default 35W)",
     )
     parser.add_argument(
+        "--accum_dtype",
+        type=str,
+        default="float64",
+        choices=["float64", "float32"],
+        help="[specrq] dtype of XX^T accumulation and the AQ loss (AQLM default float64)",
+    )
+    parser.add_argument(
         "--hadamard",
         action="store_true",
         help="[specrq] DbD block-Hadamard rotation: random signs + block FWHT on each linear's input dim",
@@ -886,6 +894,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     args = parser.parse_args()
+    aq_engine_module.DEFAULT_ACCUMULATOR_DTYPE = getattr(torch, args.accum_dtype)
     if args.devices is None:
         if torch.cuda.is_available():
             args.devices = [torch.device(f"cuda:{i}") for i in range(torch.cuda.device_count())]

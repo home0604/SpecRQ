@@ -1,0 +1,227 @@
+{
+ "exp": "E2",
+ "run": "qwen05_c1_noHad35w_wt2_fp64_full",
+ "time": "2026-11-06T01:38:51",
+ "commit": "a4af940",
+ "dirty_files": 17,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "setting": "C1 full, identical to qwen05_c1_had35w_wt2_fp64 but --hadamard off",
+  "d": 8,
+  "K": 256,
+  "L": 5,
+  "calib": "wikitext2 1024x4096",
+  "gpu": 2,
+  "ckpt": "/data/lsh/ckpts/weightvq/qwen05/c1_noHad35w_wt2_fp64",
+  "log": "/data/lsh/logs/e2_qwen05_full_noHad35w_fp64.log",
+  "code_note": "started 21:35 after src/aq.py draft path + datautils pile_val loaders were added (no effect without draft attrs / with wikitext2)"
+ },
+ "metrics": {
+  "target_quality": {
+   "seq4096": {
+    "wikitext2": {
+     "k5": 13.3655,
+     "k4": 15.8211,
+     "k3": 24.6146,
+     "fp16": 13.0755
+    },
+    "c4": {
+     "k5": 18.0288,
+     "k4": 20.9367,
+     "k3": 32.301,
+     "fp16": 17.4078
+    }
+   },
+   "seq512": {
+    "wikitext2": {
+     "k5": 19.194,
+     "k4": 22.7797,
+     "k3": 35.5572,
+     "fp16": 18.8076
+    },
+    "c4": {
+     "k5": 23.3345,
+     "k4": 26.9613,
+     "k3": 39.3568,
+     "fp16": 22.5855
+    }
+   }
+  },
+  "wall_quantize_plus_eval4096_s": 14359,
+  "accept_A": {
+   "wikitext2": {
+    "n_windows": 40,
+    "n_tokens": 20440,
+    "tv_mean": 0.3526586592197418,
+    "accept_prob_1mTV": 0.6473413407802582,
+    "top1_agree": 0.6188356280326843,
+    "kl_t_d": 0.6357546448707581,
+    "kl_d_t": 0.7665446996688843,
+    "ppl_target": 18.42713165283203,
+    "ppl_draft": 34.154090881347656,
+    "ppl_fp16": 18.12192153930664,
+    "kl_fp16_target": 0.03262059763073921,
+    "top1_fp16_target": 0.9045009613037109
+   },
+   "c4": {
+    "n_windows": 40,
+    "n_tokens": 20440,
+    "tv_mean": 0.33385923504829407,
+    "accept_prob_1mTV": 0.6661407649517059,
+    "top1_agree": 0.6176614761352539,
+    "kl_t_d": 0.5355178117752075,
+    "kl_d_t": 0.6312475800514221,
+    "ppl_target": 20.773998260498047,
+    "ppl_draft": 34.753074645996094,
+    "ppl_fp16": 20.124181747436523,
+    "kl_fp16_target": 0.039295583963394165,
+    "top1_fp16_target": 0.8855674862861633
+   },
+   "greedy_sim": {
+    "instruct": {
+     "draft_match_rate_on_target_path": 0.6582230739851592,
+     "gamma1": {
+      "tokens_per_iter": 1.652,
+      "mean_accepted": 0.662
+     },
+     "gamma2": {
+      "tokens_per_iter": 2.0753768844221105,
+      "mean_accepted": 1.0904522613065326
+     },
+     "gamma4": {
+      "tokens_per_iter": 2.5415384615384617,
+      "mean_accepted": 1.563076923076923
+     }
+    },
+    "wikitext2": {
+     "draft_match_rate_on_target_path": 0.8759765625,
+     "gamma1": {
+      "tokens_per_iter": 1.8584392014519056,
+      "mean_accepted": 0.8620689655172413
+     },
+     "gamma2": {
+      "tokens_per_iter": 2.585858585858586,
+      "mean_accepted": 1.601010101010101
+     },
+     "gamma4": {
+      "tokens_per_iter": 3.7372262773722627,
+      "mean_accepted": 2.7554744525547443
+     }
+    },
+    "target_teacher_forced_vs_generated_consistency": 0.9820925034582615,
+    "per_prompt": [
+     {
+      "kind": "instruct",
+      "len": 128,
+      "match_rate": 0.6796875,
+      "first_mismatch": 0
+     },
+     {
+      "kind": "instruct",
+      "len": 128,
+      "match_rate": 0.734375,
+      "first_mismatch": 0
+     },
+     {
+      "kind": "instruct",
+      "len": 128,
+      "match_rate": 0.7109375,
+      "first_mismatch": 0
+     },
+     {
+      "kind": "instruct",
+      "len": 87,
+      "match_rate": 0.6206896551724138,
+      "first_mismatch": 3
+     },
+     {
+      "kind": "instruct",
+      "len": 128,
+      "match_rate": 0.6796875,
+      "first_mismatch": 0
+     },
+     {
+      "kind": "instruct",
+      "len": 79,
+      "match_rate": 0.6075949367088608,
+      "first_mismatch": 0
+     },
+     {
+      "kind": "instruct",
+      "len": 20,
+      "match_rate": 0.6,
+      "first_mismatch": 0
+     },
+     {
+      "kind": "instruct",
+      "len": 128,
+      "match_rate": 0.6328125,
+      "first_mismatch": 0
+     },
+     {
+      "kind": "wikitext2",
+      "len": 128,
+      "match_rate": 0.90625,
+      "first_mismatch": 2
+     },
+     {
+      "kind": "wikitext2",
+      "len": 128,
+      "match_rate": 0.8984375,
+      "first_mismatch": 2
+     },
+     {
+      "kind": "wikitext2",
+      "len": 128,
+      "match_rate": 0.875,
+      "first_mismatch": 1
+     },
+     {
+      "kind": "wikitext2",
+      "len": 128,
+      "match_rate": 0.7109375,
+      "first_mismatch": 1
+     },
+     {
+      "kind": "wikitext2",
+      "len": 128,
+      "match_rate": 0.859375,
+      "first_mismatch": 5
+     },
+     {
+      "kind": "wikitext2",
+      "len": 128,
+      "match_rate": 0.9375,
+      "first_mismatch": 2
+     },
+     {
+      "kind": "wikitext2",
+      "len": 128,
+      "match_rate": 0.890625,
+      "first_mismatch": 0
+     },
+     {
+      "kind": "wikitext2",
+      "len": 128,
+      "match_rate": 0.9296875,
+      "first_mismatch": 2
+     }
+    ]
+   }
+  }
+ },
+ "notes": ""
+}

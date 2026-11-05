@@ -1,0 +1,86 @@
+{
+ "exp": "E2",
+ "run": "calib_pile_val_stats",
+ "time": "2026-11-05T20:53:35",
+ "commit": "a3cc999",
+ "dirty_files": 19,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "setting": "pile_val calibration loader stats",
+  "file": "/data/lsh/datasets/pile_val/val.jsonl",
+  "source": "HF mit-han-lab/pile-val-backup@2f5e46ae6a69cf0dce4b12f78241c408936ca0e4 val.jsonl.zst (sha256 264c875d...) -> zstd -d",
+  "loader": "specrq/dbd/src/datautils.py::get_pile_val (seeded doc shuffle, '\\n\\n' join, non-overlapping windows)",
+  "script": "experiments/04_speed/pile_val_stats.py"
+ },
+ "metrics": {
+  "n_docs": 214670,
+  "n_chars": 1333687910,
+  "/data/models/llama3.1_8b_instruct": {
+   "tokens": 327416630,
+   "requested_1024x4096": 4194304,
+   "ratio_requested_over_available": 0.012810296166080508,
+   "docs_ge_4096_tokens": 14411,
+   "median_doc_tokens": 415,
+   "tokenize_s": 166.3875060081482,
+   "loader": {
+    "n": 1024,
+    "shape": [
+     1,
+     4096
+    ],
+    "distinct_window_prefixes": 1024,
+    "first_tokens": [
+     128000,
+     3301,
+     91199,
+     314,
+     2,
+     50,
+     16,
+     534
+    ],
+    "loader_s": 19.829322576522827
+   }
+  },
+  "/data/models/qwen2.5_0.5b_instruct": {
+   "tokens": 340464322,
+   "requested_1024x4096": 4194304,
+   "ratio_requested_over_available": 0.012319364259260035,
+   "docs_ge_4096_tokens": 15660,
+   "median_doc_tokens": 426,
+   "tokenize_s": 231.13607692718506,
+   "loader": {
+    "n": 1024,
+    "shape": [
+     1,
+     4096
+    ],
+    "distinct_window_prefixes": 1023,
+    "first_tokens": [
+     3221,
+     90099,
+     314,
+     2,
+     50,
+     16,
+     532,
+     10399
+    ],
+    "loader_s": 21.25439143180847
+   }
+  }
+ },
+ "notes": ""
+}

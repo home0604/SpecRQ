@@ -1,0 +1,91 @@
+{
+ "exp": "E3",
+ "run": "qwen05_smoke_accept_int4_codebook_rounding_only",
+ "time": "2026-11-05T22:28:06",
+ "commit": "1c0f06c",
+ "dirty_files": 20,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "setting": "smoke ckpt (tiny training), draft k=3 vs target k=5",
+  "ckpt": "/data/lsh/ckpts/weightvq/smoke/qwen05_c1_35w_tiny",
+  "draft": "/data/lsh/ckpts/weightvq/smoke/qwen05_c1_35w_tiny/draft_q/int4_codebook.pt",
+  "kd": 3,
+  "kt": 5,
+  "seqlen": 512,
+  "n_windows": 40,
+  "tool": "experiments/06_accept/draft_target_eval.py",
+  "train": null
+ },
+ "metrics": {
+  "wikitext2": {
+   "n_windows": 40,
+   "n_tokens": 20440,
+   "tv_mean": 0.9211227297782898,
+   "accept_prob_1mTV": 0.0788772702217102,
+   "top1_agree": 0.04809197783470154,
+   "kl_t_d": 7.852504253387451,
+   "kl_d_t": 7.462856292724609,
+   "ppl_target": 20.903024673461914,
+   "ppl_draft": 51905.77734375
+  },
+  "c4": {
+   "n_windows": 40,
+   "n_tokens": 20440,
+   "tv_mean": 0.9284024834632874,
+   "accept_prob_1mTV": 0.07159751653671265,
+   "top1_agree": 0.04099804162979126,
+   "kl_t_d": 8.15433120727539,
+   "kl_d_t": 7.869871616363525,
+   "ppl_target": 23.495201110839844,
+   "ppl_draft": 84314.328125
+  },
+  "greedy_sim": {
+   "instruct": {
+    "draft_match_rate_on_target_path": 0.031996783088235295,
+    "gamma1": {
+     "tokens_per_iter": 1.037621359223301,
+     "mean_accepted": 0.03762135922330097
+    },
+    "gamma2": {
+     "tokens_per_iter": 1.037621359223301,
+     "mean_accepted": 0.03762135922330097
+    },
+    "gamma4": {
+     "tokens_per_iter": 1.037621359223301,
+     "mean_accepted": 0.03762135922330097
+    }
+   },
+   "wikitext2": {
+    "draft_match_rate_on_target_path": 0.0224609375,
+    "gamma1": {
+     "tokens_per_iter": 1.0178926441351888,
+     "mean_accepted": 0.018886679920477135
+    },
+    "gamma2": {
+     "tokens_per_iter": 1.0209371884346958,
+     "mean_accepted": 0.02193419740777667
+    },
+    "gamma4": {
+     "tokens_per_iter": 1.0219560878243512,
+     "mean_accepted": 0.022954091816367265
+    }
+   },
+   "target_teacher_forced_vs_generated_consistency": 0.9835843779146671
+  },
+  "wall_s": 79.3206787109375
+ },
+ "notes": "Tool validation on the tiny smoke ckpt; not a quality result."
+}

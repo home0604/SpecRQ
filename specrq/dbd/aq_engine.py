@@ -15,11 +15,17 @@ from src.hadamard import make_signs, pick_block_size, rotate_weight, rotate_xtx
 from src.utils import ellipsis
 
 
+# [specrq] accumulator dtype for XX^T and the AQ loss; main.py sets it from --accum_dtype (default float64 = AQLM)
+DEFAULT_ACCUMULATOR_DTYPE: torch.dtype = torch.float64
+
+
 class AQEngine(nn.Module):
     """A wrapper class that runs AQ training for a single linear layer. All the important math is in aq.py"""
 
-    def __init__(self, layer: nn.Linear, accumulator_dtype: torch.dtype = torch.float64):
+    def __init__(self, layer: nn.Linear, accumulator_dtype: Optional[torch.dtype] = None):
         super().__init__()
+        if accumulator_dtype is None:
+            accumulator_dtype = DEFAULT_ACCUMULATOR_DTYPE
         self.layer = layer
         self.device = layer.weight.device
         self.columns = self.layer.weight.data.shape[1]
@@ -32,6 +38,8 @@ class AQEngine(nn.Module):
         self.codebook_weights: Sequence[float] = (0.0, 0.0, 0.5, 0.0, 0.5)
         # [specrq] optional block-Hadamard rotation (DbD Alg. 1): set hadamard_seed before quantize() to enable
         self.hadamard_seed: Optional[int] = None
+        # [specrq] skip prefixes with alpha_k == 0 in _compute_mse (they contribute exactly 0 * mse_k to the loss)
+        self.skip_zero_weight_prefixes: bool = True
         self.rotation_signs: Optional[torch.Tensor] = None
         self.hadamard_block_size: int = 1
         self.rotated_weight: Optional[torch.Tensor] = None
@@ -177,7 +185,9 @@ class AQEngine(nn.Module):
 
         # Inspired by Matryoshka Representation Learning
         for i in range(1, total_codebooks + 1):
-            
+            if self.skip_zero_weight_prefixes and float(self.codebook_weights[i - 1]) == 0.0:
+                continue  # [specrq] alpha_i == 0: term is 0 * mse_i; skipping leaves loss and gradients unchanged
+
             quantized_weight_i = self.quantized_weight(selection, num_codebooks=i)
             
             delta_weight = (quantized_weight_i - reference_weight).to(self.XTX.dtype)
