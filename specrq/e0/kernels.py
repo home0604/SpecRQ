@@ -54,6 +54,7 @@ class Case:
     ref: Callable[[torch.Tensor], torch.Tensor]
     bytes_w: int
     info: dict = field(default_factory=dict)
+    max_m: int | None = None  # largest M the kernel accepts (None = any)
 
 
 class Unsupported(Exception):
@@ -156,6 +157,31 @@ def build_dequant(N, K, cfg, dev="cuda"):
                       "path": "AQLM dequantize_gemm (embedding_bag -> F.linear)"})
 
 
+# ----------------------------------------------------------------------------------------------- nestkern (ours)
+def build_nest_gemv(N, K, cfg, dev="cuda"):
+    """Our planar nested-VQ GEMV (path (a), M=1). cfg 'C1k<k>': C1 codes (L=5, 8 bit, d=8), prefix k."""
+    from specrq.nestkern.ops import nest_gemv
+    from specrq.nestkern.pack import PlanarVQ, kernel_codes, ref_matmul
+    L, b = VQ_CONFIGS["C1"]
+    # cfg grammar: 'C1k<k>[r<repl>][g]'; r = codebook smem replication, g = force generic (no register-x) path
+    body = cfg[3:]
+    variant = 1 if body.endswith("g") else 0
+    body = body.rstrip("g")
+    k, _, repl = body.partition("r")
+    k, repl = int(k), int(repl or 0)
+    if K % 32:
+        raise Unsupported(f"nest_gemv needs K%32==0 (got {K})")
+    codes = torch.randint(0, 256, (L, N, K // D), device=dev, dtype=torch.uint8)
+    cbs = (torch.randn(L, 256, D, device=dev) * (3.0 / (K * L) ** 0.5)).half()
+    sc = (torch.rand(N, device=dev) + 0.5).half()
+    p = PlanarVQ(codes, cbs, sc, N, K)
+    kc = kernel_codes(codes)
+    return Case(fn=lambda x: nest_gemv(x, kc, cbs, sc, k, repl, variant), ref=lambda x: ref_matmul(x, p, k), bytes_w=p.nbytes(k),
+                info={"L": L, "b": b, "d": D, "k": k, "bpw": k * b / D, "code_dtype": "uint8 planar",
+                      "path": "nestkern planar GEMV (a), M=1", "repl": repl,
+                      "variant": "generic" if variant == 1 or repl or K > 4096 else "xreg"}, max_m=1)
+
+
 # kernel name -> (builder, list of configs or [None])
 KERNELS = {
     "fp16": (build_fp16, [None]),
@@ -164,6 +190,8 @@ KERNELS = {
     "aqlm_cuda_dq": (lambda N, K, cfg: build_aqlm_cuda(N, K, cfg, dequant=True), ["A1x16", "A2x8", "A1x8", "C1", "C2"]),
     "aqlm_triton": (build_aqlm_triton, ["A2x8", "C2", "C1"]),
     "dequant": (build_dequant, ["C1", "C2"]),
+    "nest_gemv": (build_nest_gemv, ["C1k1", "C1k2", "C1k3", "C1k4", "C1k5",
+                                    "C1k1g", "C1k2g", "C1k5g", "C1k3r4", "C1k5r2"]),
 }
 
 
