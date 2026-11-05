@@ -53,6 +53,23 @@ class NestLinear:
         self.signs = None if (s is None or self.hb <= 1) else s.detach().float().to(device).contiguous()
         self.draft = {}  # k_d -> (codebooks [k_d, 256, 8], scales [N])
 
+    @classmethod
+    def synthetic(cls, N, K, device, dtype, L=5, hadamard_block=256, bias=False, gen=None):
+        """Random C1-format linear (codes/codebooks/scales/signs) built directly on the GPU (timing only)."""
+        self = cls.__new__(cls)
+        self.N, self.K, self.L = N, K, L
+        codes = torch.randint(0, 256, (L, N, K // 8), device=device, dtype=torch.uint8, generator=gen)
+        self.mcodes = mma_codes(codes)
+        self.kcodes = kernel_codes(codes) if K <= cls.GEMV_MAX_K else None
+        del codes
+        self.cb = (torch.randn(L, 256, 8, device=device, generator=gen) * (3.0 / (K * L) ** 0.5)).to(dtype)
+        self.sc = (torch.rand(N, device=device, generator=gen) + 0.5).to(dtype)
+        self.bias = (torch.randn(N, device=device, generator=gen) * 0.01).to(dtype) if bias else None
+        self.hb = hadamard_block if (hadamard_block > 1 and K % hadamard_block == 0) else 1
+        self.signs = (torch.randint(0, 2, (K,), device=device, generator=gen).float() * 2 - 1) if self.hb > 1 else None
+        self.draft = {}
+        return self
+
     def set_draft(self, codebooks, scales):
         """codebooks [k_d, 256, 1, 8] or [k_d, 256, 8]; scales [N, 1, 1, 1] or [N] (DbD draft_state_dict format)."""
         cb = codebooks.reshape(codebooks.shape[0], 256, 8).to(self.cb.device, self.cb.dtype).contiguous()
@@ -167,6 +184,49 @@ class NestModel:
         self.decode_attn = "fp32"  # "fp32" (compiled fp32 bmm/softmax) or "sdpa" for M <= 16
         self._rope_len = 0
         self.ckpt_dir, self.model_path = ckpt_dir, model_path
+
+    @classmethod
+    def synthetic(cls, model_path, device="cuda", dtype=torch.bfloat16, L=5, hadamard=True, seed=0, verbose=True):
+        """Real embed / norms / lm_head from the HF safetensors of `model_path` (only those tensors are read) and
+        random C1 linears (codes, codebooks, scales, Hadamard signs) generated on the GPU. For timing only."""
+        import json as _json
+        from safetensors import safe_open
+        from transformers import AutoConfig
+        self = cls.__new__(cls)
+        self.cfg = cfg = AutoConfig.from_pretrained(model_path)
+        self.device, self.dtype = torch.device(device), dtype
+        self.n_layers, self.H, self.Hkv = cfg.num_hidden_layers, cfg.num_attention_heads, cfg.num_key_value_heads
+        self.D = getattr(cfg, "head_dim", None) or cfg.hidden_size // cfg.num_attention_heads
+        self.eps = cfg.rms_norm_eps
+        idx = _json.load(open(os.path.join(model_path, "model.safetensors.index.json")))["weight_map"]
+
+        def get(name):
+            with safe_open(os.path.join(model_path, idx[name]), framework="pt", device=str(self.device)) as f:
+                return f.get_tensor(name).to(dtype)
+        self.embed = get("model.embed_tokens.weight")
+        self.norm = get("model.norm.weight")
+        self.lm_head = get("lm_head.weight") if "lm_head.weight" in idx else self.embed
+        hid, inter = cfg.hidden_size, cfg.intermediate_size
+        shapes = {"q_proj": (self.H * self.D, hid), "k_proj": (self.Hkv * self.D, hid), "v_proj": (self.Hkv * self.D, hid),
+                  "o_proj": (hid, self.H * self.D), "gate_proj": (inter, hid), "up_proj": (inter, hid),
+                  "down_proj": (hid, inter)}
+        bias = getattr(cfg, "attention_bias", False) or cfg.model_type == "qwen2"
+        gen = torch.Generator(device=self.device).manual_seed(seed)
+        self.layers = []
+        for i in range(self.n_layers):
+            d = {"in_norm": get(f"model.layers.{i}.input_layernorm.weight"),
+                 "post_norm": get(f"model.layers.{i}.post_attention_layernorm.weight")}
+            for n, (N, K) in shapes.items():
+                d[n] = NestLinear.synthetic(N, K, self.device, dtype, L, 256 if hadamard else 1,
+                                            bias=bias and n in ("q_proj", "k_proj", "v_proj"), gen=gen)
+            self.layers.append(d)
+            if verbose and i % 8 == 0:
+                print(f"[infer] synthetic layer {i}/{self.n_layers}", flush=True)
+        self.L = L
+        self.inv_freq, self.rope_scaling = _rope_inv_freq(cfg, self.device)
+        self.use_compile, self.decode_attn, self._rope_len = True, "fp32", 0
+        self.ckpt_dir, self.model_path = f"synthetic:C1 L={L} hadamard={hadamard} seed={seed}", model_path
+        return self
 
     # ------------------------------------------------------------------ draft codebooks
     def load_draft(self, sd: dict) -> int:
