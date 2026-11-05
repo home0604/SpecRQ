@@ -1,0 +1,36 @@
+{
+ "args": {
+  "model": "/data/models/llama2_7b_32k_instruct",
+  "rep": "rq",
+  "draft_wbits": "16",
+  "ctx": 8192,
+  "num_prompts": 10,
+  "dataset": "pg19",
+  "gpus": [
+   0,
+   6
+  ],
+  "out": "results/specdec/target_curve/sv8_t4.json",
+  "ref": true,
+  "bits": 4,
+  "group": 32,
+  "budget": null,
+  "budget_frac": 0.25,
+  "sink": 4,
+  "window": 32,
+  "kernel": 5,
+  "codebook": "/data/lsh/ckpts/wikitext/both_quant_Key_K[16]C[256]D[16]_Value_K[16]C[256]D[16]_SubVec8_Stages1",
+  "m": 2,
+  "target": "full",
+  "draft_new": "quant",
+  "kv_bits": 4,
+  "kv_scale": "rtn",
+  "target_stages": 4,
+  "rq_window": 128
+ },
+ "rep": "rq_S16C256D16_m2_t4_w128",
+ "ppl": 8.712668148161798,
+ "tokens": 81910,
+ "kl": 0.03630962169238782,
+ "top1_agree": 0.9347576608472714
+}

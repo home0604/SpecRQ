@@ -1,0 +1,29 @@
+{
+ "args": {
+  "model": "/data/models/llama2_7b_32k_instruct",
+  "rep": "quantspec",
+  "draft_wbits": "n8",
+  "ctx": 8192,
+  "num_prompts": 10,
+  "dataset": "pg19",
+  "gpus": [
+   6,
+   7
+  ],
+  "out": "results/specdec/nested_weight/ppl_w8_kvqs.json",
+  "bits": 4,
+  "group": 128,
+  "budget": null,
+  "budget_frac": 0.25,
+  "sink": 4,
+  "window": 32,
+  "kernel": 5,
+  "codebook": null,
+  "m": 2,
+  "target": "full",
+  "draft_new": "quant"
+ },
+ "rep": "quantspec_g128",
+ "ppl": 8.460743483412672,
+ "tokens": 81910
+}

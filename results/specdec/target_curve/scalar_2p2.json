@@ -1,0 +1,36 @@
+{
+ "args": {
+  "model": "/data/models/llama2_7b_32k_instruct",
+  "rep": "quantspec",
+  "draft_wbits": "16",
+  "ctx": 8192,
+  "num_prompts": 10,
+  "dataset": "pg19",
+  "gpus": [
+   3,
+   4
+  ],
+  "out": "results/specdec/target_curve/scalar_2p2.json",
+  "ref": true,
+  "bits": 4,
+  "group": 128,
+  "budget": null,
+  "budget_frac": 0.25,
+  "sink": 4,
+  "window": 32,
+  "kernel": 5,
+  "codebook": null,
+  "m": 2,
+  "target": "full",
+  "draft_new": "quant",
+  "kv_bits": 2,
+  "kv_scale": "rtn",
+  "target_stages": null,
+  "rq_window": 128
+ },
+ "rep": "quantspec_g128_u2l2_full",
+ "ppl": 8.481592841506728,
+ "tokens": 81910,
+ "kl": 0.01114814554781955,
+ "top1_agree": 0.9562202417287267
+}
