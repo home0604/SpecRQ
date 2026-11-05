@@ -26,6 +26,8 @@ class AQEngine(nn.Module):
         )
         self.quantized_weight: Optional[QuantizedWeight] = None
         self.nsamples = 0
+        # Matryoshka weights alpha_k (one per codebook prefix k=1..M); set from args.codebook_weights in quantize()
+        self.codebook_weights: Sequence[float] = (0.0, 0.0, 0.5, 0.0, 0.5)
 
     @torch.no_grad()
     def add_batch(self, inp: torch.Tensor):
@@ -44,6 +46,8 @@ class AQEngine(nn.Module):
     @torch.enable_grad()
     def quantize(self, *, args: Namespace, verbose: bool = True) -> QuantizedWeight:
         """create a QuantizedLinear with specified args based on the collected hessian (XTX) data"""
+        if getattr(args, "codebook_weights", None) is not None:
+            self.codebook_weights = tuple(float(w) for w in args.codebook_weights)
         assert isinstance(args.devices, (list, tuple)) and len(args.devices) >= 1, f"Found devices = {args.devices}"
         assert args.devices[0] == self.device, (args.devices[0], self.XTX.device)
         self.quantized_weight = QuantizedWeight(
@@ -146,7 +150,7 @@ class AQEngine(nn.Module):
         total_codebooks = self.quantized_weight.num_codebooks
         
         # EXAMPLE - 35W 
-        codebook_weights = torch.tensor([0,0, 0.5,  0, 0.5], device=self.device, dtype=self.XTX.dtype)
+        codebook_weights = torch.tensor(self.codebook_weights, device=self.device, dtype=self.XTX.dtype)
 
         total_loss = torch.tensor(0.0, device=self.device, dtype=self.XTX.dtype)
 

@@ -1,0 +1,93 @@
+{
+ "exp": "E2",
+ "run": "qwen05_c1_35w_tiny_smoke",
+ "time": "2026-11-05T18:18:26",
+ "commit": "a9a62c5",
+ "dirty_files": 3,
+ "host": "shark",
+ "cuda_visible_devices": "0",
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "setting": "C1 smoke (tiny)",
+  "d": 8,
+  "K": 256,
+  "L": 5,
+  "k": [
+   3,
+   5
+  ],
+  "codebook_weights": [
+   0,
+   0,
+   0.5,
+   0,
+   0.5
+  ],
+  "nsamples": 16,
+  "val_size": 0,
+  "model_seqlen": 512,
+  "init_max_iter": 20,
+  "max_epochs": 2,
+  "steps_per_epoch": 20,
+  "relative_mse_tolerance": 0.01,
+  "finetune_max_epochs": 0,
+  "beam_size": 1,
+  "calib": "wikitext2",
+  "code": "specrq/dbd (DbD mirror + codebook_weights CLI + rotary_emb device fix)",
+  "ckpt": "/data/lsh/ckpts/weightvq/smoke/qwen05_c1_35w_tiny",
+  "logs": [
+   "/data/lsh/logs/e2_qwen05_c1_smoke3.log",
+   "/data/lsh/logs/e2_qwen05_c1_smoke3_prefix.log",
+   "/data/lsh/logs/e2_qwen05_fp16_ppl512.log"
+  ],
+  "metric_note": "weight_rel_mse = ||W - W_hat^(k)||^2/||W||^2 (weight space, not Hessian-weighted)"
+ },
+ "metrics": {
+  "weight_rel_mse_k1_median": 0.32465311884880066,
+  "weight_rel_mse_k1_min": 0.21731048822402954,
+  "weight_rel_mse_k1_max": 0.5059675574302673,
+  "weight_rel_mse_k1_paramweighted": 0.3275970770858037,
+  "weight_rel_mse_k2_median": 0.10809248313307762,
+  "weight_rel_mse_k2_min": 0.07129541784524918,
+  "weight_rel_mse_k2_max": 0.3992621898651123,
+  "weight_rel_mse_k2_paramweighted": 0.11284939382607356,
+  "weight_rel_mse_k3_median": 0.039540838450193405,
+  "weight_rel_mse_k3_min": 0.026086637750267982,
+  "weight_rel_mse_k3_max": 0.4129922688007355,
+  "weight_rel_mse_k3_paramweighted": 0.045255316658996236,
+  "weight_rel_mse_k4_median": 0.018429375253617764,
+  "weight_rel_mse_k4_min": 0.012563350610435009,
+  "weight_rel_mse_k4_max": 0.45794162154197693,
+  "weight_rel_mse_k4_paramweighted": 0.025259659627380852,
+  "weight_rel_mse_k5_median": 0.01241935696452856,
+  "weight_rel_mse_k5_min": 0.007153526414185762,
+  "weight_rel_mse_k5_max": 0.5043376088142395,
+  "weight_rel_mse_k5_paramweighted": 0.019767854363173964,
+  "target_quality": {
+   "k5_ppl_wikitext2_seq512": 21.8891,
+   "k5_ppl_c4_seq512": 26.3569,
+   "fp16_ppl_wikitext2_seq512": 18.8076,
+   "fp16_ppl_c4_seq512": 22.5855
+  },
+  "n_linears": 168,
+  "quantize_plus_eval_wall_s": 832,
+  "eval_peak_cuda_bytes": 1678191616,
+  "host_maxrss_kb": 4503188,
+  "layer_time_s_range": [
+   30.5,
+   34.5
+  ]
+ },
+ "notes": "Pipeline smoke only; not a quality result. Tiny calibration/epochs, no fine-tune, Hadamard not implemented."
+}

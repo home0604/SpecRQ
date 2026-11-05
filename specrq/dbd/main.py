@@ -97,6 +97,10 @@ def get_inps(
             if hasattr(model.model.decoder, "project_in") and model.model.decoder.project_in:
                 model.model.decoder.project_in = model.model.decoder.project_in.to(device)
     device = emb.weight.device  # now default device is the one where the embeddings are.
+    # [specrq] transformers>=4.45 computes RoPE once in model.model.rotary_emb; move it with the embeddings
+    rotary_emb = getattr(getattr(model, "model", None), "rotary_emb", None)
+    if rotary_emb is not None:
+        rotary_emb.to(device)
     layer_device = next(layers[0].parameters()).device
     layers[0] = layers[0].to(device)
 
@@ -150,6 +154,8 @@ def get_inps(
 
     layers[0] = layers[0].to(layer_device)
     model.get_input_embeddings().to(emb_device)
+    if rotary_emb is not None:
+        rotary_emb.to(emb_device)
     if model.config.model_type == "opt":
         model.model.decoder.embed_positions = model.model.decoder.embed_positions.to(emb_device)
         if hasattr(model.model.decoder, "project_in") and model.model.decoder.project_in:
@@ -671,6 +677,13 @@ def main():
         type=int,
         default=1,
         help="#Number of codebooks per layer",
+    )
+    parser.add_argument(
+        "--codebook_weights",
+        type=float,
+        nargs="+",
+        default=[0.0, 0.0, 0.5, 0.0, 0.5],
+        help="Drop-by-Drop Matryoshka weights alpha_k for prefixes k=1..num_codebooks (default 35W)",
     )
     parser.add_argument(
         "--nbits_per_codebook",
