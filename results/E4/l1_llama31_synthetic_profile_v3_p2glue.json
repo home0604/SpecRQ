@@ -1,0 +1,612 @@
+{
+ "exp": "E4",
+ "run": "l1_llama31_synthetic_profile_v3_p2glue",
+ "time": "2026-11-05T22:35:20",
+ "commit": "1c0f06c",
+ "dirty_files": 26,
+ "host": "shark",
+ "cuda_visible_devices": "1",
+ "tmux_job": "sr-l1v3_p2",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "setting": "SYNTHETIC Llama-3.1-8B C1 ckpt (timing only), torch.profiler kernel sums of one eager forward, cache T=256, pos=128, det split-K"
+ },
+ "metrics": {
+  "cases": [
+   {
+    "k": 5,
+    "M": 1,
+    "gpu_sum_us": 8948.594999999992,
+    "groups_us": {
+     "kv_write_index": 152.95699999999215,
+     "other": 308.7999999999629,
+     "linear_nest": 7027.920000000043,
+     "glue_compiled": 307.328999999977,
+     "fwht": 54.62200000001303,
+     "lm_head": 1096.9670000000042
+    },
+    "kernels": {
+     "void (anonymous namespace)::elementwise_kernel_with_index<int, at::nat": {
+      "n": 2,
+      "us": 2.0799999999990177
+     },
+     "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunc": {
+      "n": 1,
+      "us": 1.344000000000051
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_inde": {
+      "n": 2,
+      "us": 4.255000000000109
+     },
+     "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_imp": {
+      "n": 2,
+      "us": 3.2960000000002765
+     },
+     "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFl": {
+      "n": 1,
+      "us": 2.0799999999999272
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 256>(__n": {
+      "n": 64,
+      "us": 237.7919999999731
+     },
+     "void (anonymous namespace)::nest_gemv_xreg_kernel<__nv_bfloat16, 5, 1,": {
+      "n": 192,
+      "us": 5310.149000000028
+     },
+     "triton_": {
+      "n": 160,
+      "us": 307.328999999977
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::index_co": {
+      "n": 64,
+      "us": 144.5419999999931
+     },
+     "void (anonymous namespace)::fwht_kernel<__nv_bfloat16, 256>(__nv_bfloa": {
+      "n": 32,
+      "us": 54.62200000001303
+     },
+     "void (anonymous namespace)::act_rot_kernel<__nv_bfloat16, 256>(__nv_bf": {
+      "n": 32,
+      "us": 63.4879999999921
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 8, 2,": {
+      "n": 32,
+      "us": 1717.7710000000152
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 128>(__n": {
+      "n": 1,
+      "us": 2.8799999999973807
+     },
+     "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int,": {
+      "n": 1,
+      "us": 1096.9670000000042
+     }
+    }
+   },
+   {
+    "k": 3,
+    "M": 1,
+    "gpu_sum_us": 6382.563999999993,
+    "groups_us": {
+     "kv_write_index": 150.17299999999204,
+     "other": 298.2440000000097,
+     "linear_nest": 4478.551000000012,
+     "glue_compiled": 306.40199999998595,
+     "fwht": 52.35499999999365,
+     "lm_head": 1096.839
+    },
+    "kernels": {
+     "void (anonymous namespace)::elementwise_kernel_with_index<int, at::nat": {
+      "n": 2,
+      "us": 2.080000000000382
+     },
+     "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunc": {
+      "n": 1,
+      "us": 1.344000000000051
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_inde": {
+      "n": 2,
+      "us": 4.320999999999913
+     },
+     "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_imp": {
+      "n": 2,
+      "us": 3.3279999999999745
+     },
+     "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFl": {
+      "n": 1,
+      "us": 2.11200000000008
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 256>(__n": {
+      "n": 64,
+      "us": 228.83300000000781
+     },
+     "void (anonymous namespace)::nest_gemv_xreg_kernel<__nv_bfloat16, 3, 2,": {
+      "n": 192,
+      "us": 3378.7370000000055
+     },
+     "triton_": {
+      "n": 160,
+      "us": 306.40199999998595
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::index_co": {
+      "n": 64,
+      "us": 141.65999999999167
+     },
+     "void (anonymous namespace)::fwht_kernel<__nv_bfloat16, 256>(__nv_bfloa": {
+      "n": 32,
+      "us": 52.35499999999365
+     },
+     "void (anonymous namespace)::act_rot_kernel<__nv_bfloat16, 256>(__nv_bf": {
+      "n": 32,
+      "us": 62.37100000000328
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 3, 1, 8, 2,": {
+      "n": 32,
+      "us": 1099.8140000000062
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 128>(__n": {
+      "n": 1,
+      "us": 2.367999999998574
+     },
+     "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int,": {
+      "n": 1,
+      "us": 1096.839
+     }
+    }
+   },
+   {
+    "k": 2,
+    "M": 1,
+    "gpu_sum_us": 5033.767000000007,
+    "groups_us": {
+     "kv_write_index": 142.36900000000423,
+     "other": 298.5939999999955,
+     "linear_nest": 3142.525000000009,
+     "glue_compiled": 300.3800000000015,
+     "fwht": 52.1949999999988,
+     "lm_head": 1097.703999999998
+    },
+    "kernels": {
+     "void (anonymous namespace)::elementwise_kernel_with_index<int, at::nat": {
+      "n": 2,
+      "us": 2.0479999999997744
+     },
+     "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunc": {
+      "n": 1,
+      "us": 1.4079999999999018
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_inde": {
+      "n": 2,
+      "us": 4.192000000000007
+     },
+     "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_imp": {
+      "n": 2,
+      "us": 3.2640000000001237
+     },
+     "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFl": {
+      "n": 1,
+      "us": 2.0799999999999272
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 256>(__n": {
+      "n": 64,
+      "us": 228.86599999999044
+     },
+     "void (anonymous namespace)::nest_gemv_xreg_kernel<__nv_bfloat16, 2, 4,": {
+      "n": 192,
+      "us": 2394.1680000000065
+     },
+     "triton_": {
+      "n": 160,
+      "us": 300.3800000000015
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::index_co": {
+      "n": 64,
+      "us": 134.04900000000453
+     },
+     "void (anonymous namespace)::fwht_kernel<__nv_bfloat16, 256>(__nv_bfloa": {
+      "n": 32,
+      "us": 52.1949999999988
+     },
+     "void (anonymous namespace)::act_rot_kernel<__nv_bfloat16, 256>(__nv_bf": {
+      "n": 32,
+      "us": 62.56000000000586
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 2, 1, 8, 2,": {
+      "n": 32,
+      "us": 748.3570000000027
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 128>(__n": {
+      "n": 1,
+      "us": 2.495999999999185
+     },
+     "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int,": {
+      "n": 1,
+      "us": 1097.703999999998
+     }
+    }
+   },
+   {
+    "k": 1,
+    "M": 1,
+    "gpu_sum_us": 4060.3390000000363,
+    "groups_us": {
+     "kv_write_index": 141.98500000000877,
+     "other": 296.5770000000048,
+     "linear_nest": 2174.887000000016,
+     "glue_compiled": 298.5960000000068,
+     "fwht": 51.198999999998705,
+     "lm_head": 1097.0950000000012
+    },
+    "kernels": {
+     "void (anonymous namespace)::elementwise_kernel_with_index<int, at::nat": {
+      "n": 2,
+      "us": 2.0799999999999272
+     },
+     "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunc": {
+      "n": 1,
+      "us": 1.344000000000051
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_inde": {
+      "n": 2,
+      "us": 4.22400000000107
+     },
+     "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_imp": {
+      "n": 2,
+      "us": 3.2640000000001237
+     },
+     "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFl": {
+      "n": 1,
+      "us": 2.0479999999997744
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 256>(__n": {
+      "n": 64,
+      "us": 226.59299999999894
+     },
+     "void (anonymous namespace)::nest_gemv_xreg_kernel<__nv_bfloat16, 1, 8,": {
+      "n": 192,
+      "us": 1668.5510000000077
+     },
+     "triton_": {
+      "n": 160,
+      "us": 298.5960000000068
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::index_co": {
+      "n": 64,
+      "us": 133.633000000008
+     },
+     "void (anonymous namespace)::fwht_kernel<__nv_bfloat16, 256>(__nv_bfloa": {
+      "n": 32,
+      "us": 51.198999999998705
+     },
+     "void (anonymous namespace)::act_rot_kernel<__nv_bfloat16, 256>(__nv_bf": {
+      "n": 32,
+      "us": 63.00800000000345
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 1, 1, 8, 2,": {
+      "n": 32,
+      "us": 506.3360000000084
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 128>(__n": {
+      "n": 1,
+      "us": 2.368000000002212
+     },
+     "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int,": {
+      "n": 1,
+      "us": 1097.0950000000012
+     }
+    }
+   },
+   {
+    "k": 5,
+    "M": 2,
+    "gpu_sum_us": 9938.755000000016,
+    "groups_us": {
+     "kv_write_index": 156.38700000000426,
+     "other": 431.23499999999194,
+     "linear_nest": 7843.702000000014,
+     "glue_compiled": 354.75300000000243,
+     "fwht": 55.775000000000546,
+     "lm_head": 1096.903000000002
+    },
+    "kernels": {
+     "void (anonymous namespace)::elementwise_kernel_with_index<int, at::nat": {
+      "n": 2,
+      "us": 2.080000000000382
+     },
+     "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_imp": {
+      "n": 1,
+      "us": 1.663000000000011
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_inde": {
+      "n": 2,
+      "us": 5.313000000000557
+     },
+     "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_imp": {
+      "n": 66,
+      "us": 127.10500000000138
+     },
+     "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFl": {
+      "n": 1,
+      "us": 2.527999999999338
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 256>(__n": {
+      "n": 64,
+      "us": 237.5089999999982
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 8, 2,": {
+      "n": 96,
+      "us": 3281.330000000008
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 8, 1,": {
+      "n": 64,
+      "us": 601.4790000000094
+     },
+     "triton_": {
+      "n": 160,
+      "us": 354.75300000000243
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::index_co": {
+      "n": 64,
+      "us": 146.466000000004
+     },
+     "void (anonymous namespace)::fwht_kernel<__nv_bfloat16, 256>(__nv_bfloa": {
+      "n": 32,
+      "us": 55.775000000000546
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 4, 4,": {
+      "n": 64,
+      "us": 3960.8929999999964
+     },
+     "void (anonymous namespace)::act_rot_kernel<__nv_bfloat16, 256>(__nv_bf": {
+      "n": 32,
+      "us": 62.077999999991334
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 128>(__n": {
+      "n": 1,
+      "us": 2.8800000000010186
+     },
+     "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int,": {
+      "n": 1,
+      "us": 1096.903000000002
+     }
+    }
+   },
+   {
+    "k": 5,
+    "M": 3,
+    "gpu_sum_us": 10299.551999999992,
+    "groups_us": {
+     "kv_write_index": 158.78800000001593,
+     "other": 436.3779999999906,
+     "linear_nest": 8122.646999999993,
+     "glue_compiled": 428.6149999999943,
+     "fwht": 55.867999999997664,
+     "lm_head": 1097.2560000000012
+    },
+    "kernels": {
+     "void (anonymous namespace)::elementwise_kernel_with_index<int, at::nat": {
+      "n": 2,
+      "us": 2.0479999999997744
+     },
+     "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_imp": {
+      "n": 1,
+      "us": 1.6640000000006694
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_inde": {
+      "n": 2,
+      "us": 6.240000000000691
+     },
+     "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_imp": {
+      "n": 66,
+      "us": 125.78899999998066
+     },
+     "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFl": {
+      "n": 1,
+      "us": 2.975999999999658
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 256>(__n": {
+      "n": 64,
+      "us": 238.65500000000065
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 8, 2,": {
+      "n": 96,
+      "us": 3418.676999999996
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 8, 1,": {
+      "n": 64,
+      "us": 625.2859999999882
+     },
+     "triton_": {
+      "n": 160,
+      "us": 428.6149999999943
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::index_co": {
+      "n": 64,
+      "us": 147.5240000000158
+     },
+     "void (anonymous namespace)::fwht_kernel<__nv_bfloat16, 256>(__nv_bfloa": {
+      "n": 32,
+      "us": 55.867999999997664
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 4, 4,": {
+      "n": 64,
+      "us": 4078.6840000000084
+     },
+     "void (anonymous namespace)::act_rot_kernel<__nv_bfloat16, 256>(__nv_bf": {
+      "n": 32,
+      "us": 67.35800000000836
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 128>(__n": {
+      "n": 1,
+      "us": 2.912000000000262
+     },
+     "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int,": {
+      "n": 1,
+      "us": 1097.2560000000012
+     }
+    }
+   },
+   {
+    "k": 5,
+    "M": 5,
+    "gpu_sum_us": 10759.791000000028,
+    "groups_us": {
+     "kv_write_index": 161.6349999999934,
+     "other": 443.2729999999856,
+     "linear_nest": 8476.377000000011,
+     "glue_compiled": 526.8170000000255,
+     "fwht": 54.24200000001292,
+     "lm_head": 1097.4470000000001
+    },
+    "kernels": {
+     "void (anonymous namespace)::elementwise_kernel_with_index<int, at::nat": {
+      "n": 2,
+      "us": 2.0160000000000764
+     },
+     "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_imp": {
+      "n": 1,
+      "us": 1.6959999999999127
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_inde": {
+      "n": 2,
+      "us": 7.041000000000167
+     },
+     "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_imp": {
+      "n": 66,
+      "us": 126.62599999998929
+     },
+     "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFl": {
+      "n": 1,
+      "us": 3.743999999999687
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 256>(__n": {
+      "n": 64,
+      "us": 240.324999999998
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 8, 2,": {
+      "n": 96,
+      "us": 3599.0610000000215
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 8, 1,": {
+      "n": 64,
+      "us": 655.1749999999911
+     },
+     "triton_": {
+      "n": 160,
+      "us": 526.8170000000255
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::index_co": {
+      "n": 64,
+      "us": 148.83399999999347
+     },
+     "void (anonymous namespace)::fwht_kernel<__nv_bfloat16, 256>(__nv_bfloa": {
+      "n": 32,
+      "us": 54.24200000001292
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 4, 4,": {
+      "n": 64,
+      "us": 4222.141
+     },
+     "void (anonymous namespace)::act_rot_kernel<__nv_bfloat16, 256>(__nv_bf": {
+      "n": 32,
+      "us": 71.64999999999964
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 128>(__n": {
+      "n": 1,
+      "us": 2.9759999999987485
+     },
+     "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int,": {
+      "n": 1,
+      "us": 1097.4470000000001
+     }
+    }
+   },
+   {
+    "k": 5,
+    "M": 8,
+    "gpu_sum_us": 11467.149000000001,
+    "groups_us": {
+     "kv_write_index": 161.43900000000394,
+     "other": 460.54799999998613,
+     "linear_nest": 9055.167000000009,
+     "glue_compiled": 639.907999999999,
+     "fwht": 52.960000000003674,
+     "lm_head": 1097.1270000000004
+    },
+    "kernels": {
+     "void (anonymous namespace)::elementwise_kernel_with_index<int, at::nat": {
+      "n": 2,
+      "us": 2.0479999999997744
+     },
+     "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_imp": {
+      "n": 1,
+      "us": 1.66399999999976
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_inde": {
+      "n": 2,
+      "us": 7.070999999999913
+     },
+     "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_imp": {
+      "n": 66,
+      "us": 127.36299999999392
+     },
+     "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFl": {
+      "n": 1,
+      "us": 4.895999999999731
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 256>(__n": {
+      "n": 64,
+      "us": 249.6649999999936
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 8, 2,": {
+      "n": 96,
+      "us": 3907.0060000000026
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 8, 1,": {
+      "n": 64,
+      "us": 693.0300000000084
+     },
+     "triton_": {
+      "n": 160,
+      "us": 639.907999999999
+     },
+     "void at::native::index_elementwise_kernel<128, 4, at::native::index_co": {
+      "n": 64,
+      "us": 147.42400000000453
+     },
+     "void (anonymous namespace)::fwht_kernel<__nv_bfloat16, 256>(__nv_bfloa": {
+      "n": 32,
+      "us": 52.960000000003674
+     },
+     "void (anonymous namespace)::nest_mma_kernel<__nv_bfloat16, 5, 1, 4, 4,": {
+      "n": 64,
+      "us": 4455.130999999997
+     },
+     "void (anonymous namespace)::act_rot_kernel<__nv_bfloat16, 256>(__nv_bf": {
+      "n": 32,
+      "us": 78.91199999999935
+     },
+     "void (anonymous namespace)::add_rms_rot_kernel<__nv_bfloat16, 128>(__n": {
+      "n": 1,
+      "us": 2.9439999999995052
+     },
+     "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int,": {
+      "n": 1,
+      "us": 1097.1270000000004
+     }
+    }
+   }
+  ]
+ },
+ "notes": ""
+}

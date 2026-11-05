@@ -88,3 +88,38 @@ def block_fwht_signed(x: torch.Tensor, signs: torch.Tensor, block_size: int) -> 
     shp = x.shape
     return _ext_fwht.block_fwht_signed(x.reshape(-1, shp[-1]).contiguous(), signs.float().contiguous(),
                                        int(block_size)).reshape(shp)
+
+
+_ext_glue = None
+
+
+def _glue():
+    global _ext_glue
+    if _ext_glue is None:
+        _ext_glue = load(name="nestkern_glue", sources=[str(_CSRC / "glue.cu")],
+                         extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17"], verbose=False)
+    return _ext_glue
+
+
+def add_rms_rot(h, d, w, signs, C, eps):
+    """h' = h + d (d may be None); x = RMSNorm(h') * w; returns (h' or None, x [M,K] if signs is None else
+    [S, M, K] with out_s = BlockFWHT_C(x * signs[s]) / sqrt(C))."""
+    ho, out = _glue().add_rms_rot(h.contiguous(), None if d is None else d.contiguous(), w, signs, int(C), float(eps))
+    return (ho if d is not None else None), out
+
+
+def act_rot(g, u, sign, C):
+    """round(round(silu(g)) * u), then BlockFWHT_C(. * sign) / sqrt(C) if sign is not None."""
+    return _glue().act_rot(g.contiguous(), u.contiguous(), sign, int(C))
+
+
+_ext_gemv_m = None
+
+
+def nest_gemv_m(x: torch.Tensor, kcodes: torch.Tensor, codebooks: torch.Tensor, scales: torch.Tensor, k: int):
+    """Small-M (1..8) CUDA-core GEMV on the gemv (lane-permuted) codes; worth it only for tiny shapes (P4, E0)."""
+    global _ext_gemv_m
+    if _ext_gemv_m is None:
+        _ext_gemv_m = load(name="nestkern_gemv_m", sources=[str(_CSRC / "nest_gemv_m.cu")],
+                           extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17"], verbose=False)
+    return _ext_gemv_m.nest_gemv_m(x.contiguous(), kcodes, codebooks, scales, int(k))

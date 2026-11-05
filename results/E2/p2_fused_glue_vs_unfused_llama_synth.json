@@ -1,0 +1,112 @@
+{
+ "exp": "E2",
+ "run": "p2_fused_glue_vs_unfused_llama_synth",
+ "time": "2026-11-05T22:28:56",
+ "commit": "1c0f06c",
+ "dirty_files": 22,
+ "host": "shark",
+ "cuda_visible_devices": "1",
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "setting": "P2 fused glue vs unfused decode path, SYNTHETIC Llama-3.1-8B C1 + Hadamard (B=256)"
+ },
+ "metrics": {
+  "rows": [
+   {
+    "k": 5,
+    "M": 1,
+    "rel": 0.016658533364534378,
+    "maxabs": 0.20703125,
+    "top1": 1.0
+   },
+   {
+    "k": 5,
+    "M": 2,
+    "rel": 0.01647004298865795,
+    "maxabs": 0.18212890625,
+    "top1": 1.0
+   },
+   {
+    "k": 5,
+    "M": 5,
+    "rel": 0.01653716340661049,
+    "maxabs": 0.1875,
+    "top1": 1.0
+   },
+   {
+    "k": 5,
+    "M": 8,
+    "rel": 0.01709761656820774,
+    "maxabs": 0.203125,
+    "top1": 1.0
+   },
+   {
+    "k": 3,
+    "M": 1,
+    "rel": 0.013701247051358223,
+    "maxabs": 0.140625,
+    "top1": 1.0
+   },
+   {
+    "k": 3,
+    "M": 2,
+    "rel": 0.014256474561989307,
+    "maxabs": 0.15625,
+    "top1": 1.0
+   },
+   {
+    "k": 3,
+    "M": 5,
+    "rel": 0.014591852203011513,
+    "maxabs": 0.171875,
+    "top1": 1.0
+   },
+   {
+    "k": 3,
+    "M": 8,
+    "rel": 0.01423935778439045,
+    "maxabs": 0.18603515625,
+    "top1": 1.0
+   },
+   {
+    "k": 1,
+    "M": 1,
+    "rel": 0.010525829158723354,
+    "maxabs": 0.11328125,
+    "top1": 1.0
+   },
+   {
+    "k": 1,
+    "M": 2,
+    "rel": 0.011084472760558128,
+    "maxabs": 0.125,
+    "top1": 1.0
+   },
+   {
+    "k": 1,
+    "M": 5,
+    "rel": 0.010357254184782505,
+    "maxabs": 0.125,
+    "top1": 1.0
+   },
+   {
+    "k": 1,
+    "M": 8,
+    "rel": 0.010571007616817951,
+    "maxabs": 0.125,
+    "top1": 1.0
+   }
+  ]
+ },
+ "notes": ""
+}

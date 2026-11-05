@@ -1,0 +1,39 @@
+{
+ "exp": "E4",
+ "run": "l1_llama31_synthetic_marlin_ar",
+ "time": "2026-11-05T23:37:09",
+ "commit": "1c0f06c",
+ "dirty_files": 35,
+ "host": "shark",
+ "cuda_visible_devices": "1",
+ "tmux_job": "sr-l1v4_p3",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "setting": "SYNTHETIC Llama-3.1-8B, Marlin INT4 g128 linears (random), fp16, AR only; timing only",
+  "model": "/data/models/llama3.1_8b_instruct",
+  "P": 128,
+  "n_new": 128,
+  "repeats": 3
+ },
+ "metrics": {
+  "step_us": 6915.385488376725,
+  "step_us_range": [
+   6915.347472815884,
+   6916.195205522804
+  ],
+  "tokens_per_s": 144.60509854161924,
+  "prefill_s": 0.020796668948605657,
+  "linear_bytes_per_token": 3598712832,
+  "lm_head_bytes": 1050673152
+ },
+ "notes": ""
+}

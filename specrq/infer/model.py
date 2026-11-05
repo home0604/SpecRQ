@@ -3,7 +3,8 @@
 Load path: DbD layer pickles (`{i}.pth`, QuantizedLinear modules) + `not_quantized_weights.pt` -> planar
 (`specrq.nestkern.pack`) -> per-linear kernel layouts:
   mma  (`mma_codes`)    always (all M <= 16; M > 16 is processed in chunks of 16 rows)
-  gemv (`kernel_codes`) only when K <= 4096 (M=1 dispatch rule from E0/M3: gemv if M == 1 and K <= 4096)
+  gemv (`kernel_codes`) only when K <= 4096. Dispatch: M == 1 and K <= 4096 -> nest_gemv (E0/M3);
+                        M in {2, 3} and N*K <= 1.2e6 (and K <= 4096) -> nest_gemv_m (P4); else nest_mma
 Each linear keeps its own codebooks (so q/k/v and gate/up are not fused). Optional draft codebook sets
 {k_d: (codebooks [k_d, 256, 8], scales [N])} can be installed per linear (DbD src/draft.py state-dict format).
 Hadamard input rotation (DbD rotation_signs / hadamard_block_size) uses the nestkern block FWHT kernel.
@@ -26,7 +27,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from specrq.nestkern.ops import block_fwht_signed, nest_gemv, nest_mma
+from specrq.nestkern.ops import act_rot, add_rms_rot, block_fwht_signed, nest_gemv, nest_gemv_m, nest_mma
 from specrq.nestkern.pack import kernel_codes, mma_codes, pack_planar
 
 REPO = Path(__file__).resolve().parents[2]
@@ -37,6 +38,7 @@ LINEARS = ("self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_att
 
 class NestLinear:
     GEMV_MAX_K = 4096
+    GEMV_M_MAX_NK = 1_200_000  # P4: small-M gemv beats mma only for tiny shapes (Qwen q/o, k/v) at M = 2..3
     DETERMINISTIC = True  # ordered split-K reduction in nest_mma (bitwise reproducible); False = fp32 atomics
 
     def __init__(self, qlin, device, dtype):
@@ -75,13 +77,15 @@ class NestLinear:
         cb = codebooks.reshape(codebooks.shape[0], 256, 8).to(self.cb.device, self.cb.dtype).contiguous()
         self.draft[cb.shape[0]] = (cb, scales.reshape(-1).to(self.sc.device, self.sc.dtype).contiguous())
 
-    def __call__(self, x, k, use_draft=False):
-        if self.signs is not None:
+    def __call__(self, x, k, use_draft=False, rotated=False):
+        if self.signs is not None and not rotated:
             x = block_fwht_signed(x, self.signs, self.hb)
         cb, sc = self.draft[k] if (use_draft and k in self.draft) else (self.cb, self.sc)
         M = x.shape[0]
         if M == 1 and self.kcodes is not None:
             y = nest_gemv(x, self.kcodes, cb, sc, k)
+        elif M <= 3 and self.kcodes is not None and self.N * self.K <= self.GEMV_M_MAX_NK:
+            y = nest_gemv_m(x, self.kcodes, cb, sc, k)
         elif M <= 16:
             y = nest_mma(x, self.mcodes, cb, sc, k, deterministic=self.DETERMINISTIC)
         else:
@@ -118,11 +122,19 @@ def _add_rms_f(h, d, w, eps: float):
     return h, _rms_f(h, w, eps)
 
 
-def _attn_f(qh, kc, vc, mask, scale: float):
+def _attn_bmm_f(qh, kc, vc, mask, scale: float):
     """qh [Hkv, G*M, D], kc/vc [Hkv, T, D] (bf16), mask [G*M, T] bool -> [Hkv, G*M, D]; fp32 scores/softmax/PV."""
     s = torch.bmm(qh.float(), kc.float().transpose(1, 2)) * scale
     s = s.masked_fill(~mask, float("-inf"))
     return torch.bmm(torch.softmax(s, -1), vc.float()).to(qh.dtype)
+
+
+def _attn_f(qh, kc, vc, mask, scale: float):
+    """Same math as _attn_bmm_f written as broadcast-reductions so inductor emits fused reduction kernels instead of
+    cuBLAS fp32 bmm (which switches to a 128x128 sgemm tile at G*M >= 20 rows: +1 ms per Llama verify, E4 L1)."""
+    s = (qh.float()[:, :, None, :] * kc.float()[:, None, :, :]).sum(-1) * scale
+    s = s.masked_fill(~mask, float("-inf"))
+    return (torch.softmax(s, -1)[..., None] * vc.float()[:, None]).sum(-2).to(qh.dtype)
 
 
 _FUSED = {"rms": _rms_f, "rope": _rope_f, "act": _act_f, "add_rms": _add_rms_f, "attn": _attn_f}
@@ -135,6 +147,29 @@ def fused(name, use_compile):
     if name not in _COMPILED:
         _COMPILED[name] = torch.compile(_FUSED[name], dynamic=False, fullgraph=True)
     return _COMPILED[name]
+
+
+class MarlinLinear:
+    """Random Marlin FP16 x INT4 (g128) linear for timing baselines (fp16 only, no Hadamard). Random int32 words are
+    valid packed int4 weights in Marlin layout, so no packing is needed."""
+
+    def __init__(self, N, K, device, gen=None):
+        import marlin  # noqa: F401
+        assert N % 128 == 0 and K % 128 == 0
+        self.N, self.K, self.L, self.hb, self.signs, self.draft, self.bias = N, K, 1, 1, None, {}, None
+        self.B = torch.randint(-2 ** 31, 2 ** 31 - 1, (K // 16, N * 16 // 8), device=device, dtype=torch.int32,
+                               generator=gen)
+        self.s = (torch.rand(K // 128, N, device=device, generator=gen) * 2e-3 + 1e-3).half()
+        self.ws = torch.zeros(N // 128 * 16, dtype=torch.int32, device=device)
+
+    def __call__(self, x, k=None, use_draft=False, rotated=False):
+        import marlin
+        y = torch.empty(x.shape[0], self.N, dtype=x.dtype, device=x.device)
+        marlin.mul(x, self.B, y, self.s, self.ws)
+        return y
+
+    def nbytes(self, k=None):
+        return self.N * self.K // 2 + self.s.numel() * 2
 
 
 @dataclass
@@ -182,11 +217,13 @@ class NestModel:
         self.inv_freq, self.rope_scaling = _rope_inv_freq(cfg, self.device)
         self.use_compile = True  # torch.compile the elementwise glue on decode-sized calls (M <= 16)
         self.decode_attn = "fp32"  # "fp32" (compiled fp32 bmm/softmax) or "sdpa" for M <= 16
+        self.fused_glue = True  # nestkern glue kernels (add+RMSNorm+FWHT, SiLU*mul+FWHT) on decode-sized calls
         self._rope_len = 0
         self.ckpt_dir, self.model_path = ckpt_dir, model_path
 
     @classmethod
-    def synthetic(cls, model_path, device="cuda", dtype=torch.bfloat16, L=5, hadamard=True, seed=0, verbose=True):
+    def synthetic(cls, model_path, device="cuda", dtype=torch.bfloat16, L=5, hadamard=True, seed=0, verbose=True,
+                  linear_impl="nest"):
         """Real embed / norms / lm_head from the HF safetensors of `model_path` (only those tensors are read) and
         random C1 linears (codes, codebooks, scales, Hadamard signs) generated on the GPU. For timing only."""
         import json as _json
@@ -217,16 +254,41 @@ class NestModel:
             d = {"in_norm": get(f"model.layers.{i}.input_layernorm.weight"),
                  "post_norm": get(f"model.layers.{i}.post_attention_layernorm.weight")}
             for n, (N, K) in shapes.items():
-                d[n] = NestLinear.synthetic(N, K, self.device, dtype, L, 256 if hadamard else 1,
-                                            bias=bias and n in ("q_proj", "k_proj", "v_proj"), gen=gen)
+                if linear_impl == "marlin":
+                    d[n] = MarlinLinear(N, K, self.device, gen=gen)
+                else:
+                    d[n] = NestLinear.synthetic(N, K, self.device, dtype, L, 256 if hadamard else 1,
+                                                bias=bias and n in ("q_proj", "k_proj", "v_proj"), gen=gen)
             self.layers.append(d)
             if verbose and i % 8 == 0:
                 print(f"[infer] synthetic layer {i}/{self.n_layers}", flush=True)
-        self.L = L
+        self.L = L if linear_impl == "nest" else 1
         self.inv_freq, self.rope_scaling = _rope_inv_freq(cfg, self.device)
-        self.use_compile, self.decode_attn, self._rope_len = True, "fp32", 0
-        self.ckpt_dir, self.model_path = f"synthetic:C1 L={L} hadamard={hadamard} seed={seed}", model_path
+        self.use_compile, self.decode_attn, self._rope_len, self.fused_glue = True, "fp32", 0, True
+        self.ckpt_dir = (f"synthetic:C1 L={L} hadamard={hadamard} seed={seed}" if linear_impl == "nest"
+                         else f"synthetic:Marlin INT4 g128 seed={seed}")
+        self.model_path = model_path
         return self
+
+    def _setup_fused(self):
+        """Per-layer packed sign groups for the fused glue: (C, signs [S, K]) for q/k/v and gate/up, C for down.
+        A group is fused only if all its linears share the block size (or none is rotated)."""
+        def group(lins):
+            hbs = {l.hb if l.signs is not None else 1 for l in lins}
+            if len(hbs) != 1:
+                return None
+            hb = hbs.pop()
+            if hb == 1:
+                return (128, None)
+            return (hb, torch.stack([l.signs for l in lins]).contiguous())
+        for lay in self.layers:
+            lay["g_qkv"] = group([lay["q_proj"], lay["k_proj"], lay["v_proj"]])
+            lay["g_gu"] = group([lay["gate_proj"], lay["up_proj"]])
+            dn = lay["down_proj"]
+            lay["g_down"] = (dn.hb, dn.signs) if dn.signs is not None else (128, None)
+        hid = self.layers[0]["q_proj"].K
+        self.fused_ok = all(l["g_qkv"] and l["g_gu"] for l in self.layers) and hid % 128 == 0 and \
+            all(l["down_proj"].K % l["g_down"][0] == 0 for l in self.layers)
 
     # ------------------------------------------------------------------ draft codebooks
     def load_draft(self, sd: dict) -> int:
@@ -282,11 +344,27 @@ class NestModel:
         mask = allowed.repeat(G, 1)[None, None]  # [1, 1, G*M, T], rows ordered (g, m)
         scale = self.D ** -0.5
         h = F.embedding(tokens, self.embed)
-        x = rms(h, self.layers[0]["in_norm"], self.eps)
+        fg = self.fused_glue and uc
+        if fg:
+            if not hasattr(self, "fused_ok"):
+                self._setup_fused()
+            fg = self.fused_ok
+        if fg:
+            C, sg = self.layers[0]["g_qkv"]
+            _, xs = add_rms_rot(h, None, self.layers[0]["in_norm"], sg, C, self.eps)
+        else:
+            x = rms(h, self.layers[0]["in_norm"], self.eps)
         for li, lay in enumerate(self.layers):
-            q = lay["q_proj"](x, k, use_draft).view(M, self.H, self.D)
-            kk = lay["k_proj"](x, k, use_draft).view(M, self.Hkv, self.D)
-            v = lay["v_proj"](x, k, use_draft).view(M, self.Hkv, self.D)
+            if fg:
+                rq = lay["g_qkv"][1] is not None
+                xq, xk, xv = (xs[0], xs[1], xs[2]) if rq else (xs, xs, xs)
+                q = lay["q_proj"](xq, k, use_draft, rotated=True).view(M, self.H, self.D)
+                kk = lay["k_proj"](xk, k, use_draft, rotated=True).view(M, self.Hkv, self.D)
+                v = lay["v_proj"](xv, k, use_draft, rotated=True).view(M, self.Hkv, self.D)
+            else:
+                q = lay["q_proj"](x, k, use_draft).view(M, self.H, self.D)
+                kk = lay["k_proj"](x, k, use_draft).view(M, self.Hkv, self.D)
+                v = lay["v_proj"](x, k, use_draft).view(M, self.Hkv, self.D)
             q, kk = rope(q, kk, cos, sin)
             cache.k[li].index_copy_(1, positions, kk.transpose(0, 1))
             cache.v[li].index_copy_(1, positions, v.transpose(0, 1))
@@ -300,10 +378,24 @@ class NestModel:
                 o = F.scaled_dot_product_attention(qh, cache.k[li][None], cache.v[li][None], attn_mask=mask,
                                                    scale=scale)
             o = o.view(self.Hkv, G, M, self.D).permute(2, 0, 1, 3).reshape(M, -1)
-            h, x = add_rms(h, lay["o_proj"](o, k, use_draft), lay["post_norm"], self.eps)
-            a = act(lay["gate_proj"](x, k, use_draft), lay["up_proj"](x, k, use_draft))
             nxt = self.layers[li + 1]["in_norm"] if li + 1 < self.n_layers else self.norm
-            h, x = add_rms(h, lay["down_proj"](a, k, use_draft), nxt, self.eps)
+            if fg:
+                C, sg = lay["g_gu"]
+                h, xs = add_rms_rot(h, lay["o_proj"](o, k, use_draft), lay["post_norm"], sg, C, self.eps)
+                xg, xu = (xs[0], xs[1]) if sg is not None else (xs, xs)
+                Cd, sd = lay["g_down"]
+                a = act_rot(lay["gate_proj"](xg, k, use_draft, rotated=True),
+                            lay["up_proj"](xu, k, use_draft, rotated=True), sd, Cd)
+                dn = lay["down_proj"](a, k, use_draft, rotated=True)
+                if li + 1 < self.n_layers:
+                    C, sg = self.layers[li + 1]["g_qkv"]
+                    h, xs = add_rms_rot(h, dn, nxt, sg, C, self.eps)
+                else:
+                    h, x = add_rms_rot(h, dn, nxt, None, 128, self.eps)
+            else:
+                h, x = add_rms(h, lay["o_proj"](o, k, use_draft), lay["post_norm"], self.eps)
+                a = act(lay["gate_proj"](x, k, use_draft), lay["up_proj"](x, k, use_draft))
+                h, x = add_rms(h, lay["down_proj"](a, k, use_draft), nxt, self.eps)
             if capture is not None:
                 capture.append(h)
         if last_only:

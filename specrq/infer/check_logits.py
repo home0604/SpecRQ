@@ -83,10 +83,16 @@ def main(argv=None):
             for t in range(a.T0, a.T):
                 steps.append(runner.forward(ids[t:t + 1], torch.tensor(t, device="cuda"), cache2, k)[0])
             dec = torch.stack(steps)
+            # verify-shaped calls: blocks of 5 tokens (M=5, compiled decode path) after the same T0 prefill
+            cache3 = runner.new_cache(a.T + 8)
+            runner.forward(ids[: a.T0], pos0, cache3, k, last_only=True)
+            ver = torch.cat([runner.forward(ids[t:min(t + 5, a.T)], torch.tensor(t, device="cuda"), cache3, k)
+                             for t in range(a.T0, a.T, 5)])
             r = {"prefill_vs_hf_sdpa": metrics(pre, ref), "decode_vs_hf_sdpa": metrics(dec, ref[a.T0:]),
                  "floor_hf_eager_vs_sdpa": metrics(ref_eager, ref),
                  "floor_hf_eager_vs_sdpa_decode_rows": metrics(ref_eager[a.T0:], ref[a.T0:]),
                  "runner_prefill_vs_fp32": metrics(pre, ref32), "runner_decode_vs_fp32": metrics(dec, ref32[a.T0:]),
+                 "runner_verify5_vs_fp32": metrics(ver, ref32[a.T0:]),
                  "hf_sdpa_bf16_vs_fp32": metrics(ref, ref32), "hf_eager_bf16_vs_fp32": metrics(ref_eager, ref32)}
             out[f"k{k}"] = r
             for name, m in r.items():

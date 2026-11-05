@@ -327,8 +327,12 @@ void launch_cfg(const torch::Tensor& x, const torch::Tensor& codes, const torch:
 template <typename T, int KP, int NT>
 void launch(int cfg, const torch::Tensor& x, const torch::Tensor& codes, const torch::Tensor& cb,
             const torch::Tensor& sc, torch::Tensor& y, torch::Tensor& cnt, torch::Tensor& ws, int M, int N, int K, int splits, int det) {
-  if (cfg == 0)  // heuristic from the M3 sweep (Llama gate_up / q_o / down / k_v, bf16, graph_flush/read)
-    cfg = N >= 8192 ? (KP <= 2 ? 2 : 8) : (N <= 2048 ? 4 : 2);
+  if (cfg == 0) {  // heuristic v2 from the P3 sweep (Llama-3.1-8B shapes, bf16, det, graph_flush/read, M=1..8)
+    const bool big = N >= 8192 || K > 4096;
+    if (N <= 2048) cfg = 4;                 // k/v projections
+    else if (KP >= 4) cfg = 1;              // (4 warps, TPW 2, KU 1)
+    else cfg = big ? 3 : 4;                 // k <= 3: (8,2,2) for gate/up/down, (8,1,2) for q/o
+  }
   switch (cfg) {
     case 1: launch_cfg<T, KP, NT, 4, 2, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
     case 2: launch_cfg<T, KP, NT, 8, 2, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
