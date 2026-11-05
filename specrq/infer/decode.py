@@ -91,6 +91,7 @@ class SpecDecoder:
         self.buf = torch.zeros(gamma + 1, dtype=torch.long, device=dev)  # [cur, d_1..d_gamma]
         self.cbuf = torch.zeros(2, dtype=torch.long, device=dev)    # [d_gamma_prev, cur] for catch-up
         self.vout = torch.zeros(gamma + 1, dtype=torch.long, device=dev)
+        self.n.fill_(1)  # warm-up/capture with valid positions (catch-up step writes position n-1)
         self.gd = _Graph(lambda: self._draft(False))
         self.gdc = _Graph(lambda: self._draft(True))
         self.gv = _Graph(self._verify)

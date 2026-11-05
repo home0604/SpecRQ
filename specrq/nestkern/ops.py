@@ -67,12 +67,13 @@ def _wsp(device, numel) -> torch.Tensor:
 
 
 def nest_mma(x: torch.Tensor, mcodes: torch.Tensor, codebooks: torch.Tensor, scales: torch.Tensor, k: int,
-             splits: int = 0, cfg: int = 0):
+             splits: int = 0, cfg: int = 0, deterministic: bool = True):
     """y [M, N] = x [M, K] @ W_k^T for 1 <= M <= 16 (tensor-core path). mcodes from pack.mma_codes.
-    splits: split-K factor (0 = auto). cfg: tile config id (0 = auto, see csrc/nest_mma.cu)."""
+    splits: split-K factor (0 = auto). cfg: tile config id (0 = auto, see csrc/nest_mma.cu).
+    deterministic: ordered split-K reduction (bitwise reproducible); False = fp32 atomicAdd (order-dependent)."""
     N = scales.numel()
     return ext_mma().nest_mma(x.contiguous(), mcodes, codebooks, scales, _cnt(x.device), _wsp(x.device, x.shape[0] * N),
-                              N, int(k), int(splits), int(cfg))
+                              N, int(k), int(splits), int(cfg), int(bool(deterministic)))
 
 
 _ext_fwht = None

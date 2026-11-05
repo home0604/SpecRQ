@@ -16,6 +16,8 @@
 // Codebooks sit in shared memory replicated R times (copy = lane % R) so a quarter-warp's 8 LDS.128 hit distinct
 // 16-byte bank groups when R = 8.
 // Dequant: k codewords summed in fp32, one rounding to the mma dtype (bf16 / fp16).
+// det = 1: each split writes its partial to a [splits, M, N] buffer and the last block sums them in split order
+// (bitwise reproducible run to run). det = 0:
 // Split-K over blockIdx.y: fp32 atomicAdd into a persistent zeroed workspace [M, N] (stays in L2); the last block of
 // each N-block column converts to the output dtype and re-zeroes its slice (self-resetting counters too).
 #include <torch/extension.h>
@@ -132,7 +134,7 @@ template <typename T, int KP, int NT, int WARPS, int TPW, int KU>
 __global__ void __launch_bounds__(WARPS * 32) nest_mma_kernel(
     const T* __restrict__ x, const uint32_t* __restrict__ codes, const uint4* __restrict__ cb,
     const T* __restrict__ scales, T* __restrict__ y, float* __restrict__ ws, int* __restrict__ counters,
-    int M, int N, int K, int ks_per_split, long long plane_u32) {
+    int M, int N, int K, int ks_per_split, long long plane_u32, int det) {
   constexpr int R = repl_mma<KP>();
   extern __shared__ uint4 sh[];  // [KP][256][R] codewords
   for (int i = threadIdx.x; i < KP * 256; i += blockDim.x) {
@@ -245,7 +247,9 @@ __global__ void __launch_bounds__(WARPS * 32) nest_mma_kernel(
         const int n = nb + (q >> 1) * 8;
         if (m < M) {
           const float v = acc[i][j][q] * ((q >> 1) ? s1 : s0);
-          if (split)
+          if (split && det)
+            ws[((long long)blockIdx.y * M + m) * N + n] = v;  // per-split partial (deterministic order below)
+          else if (split)
             atomicAdd(ws + (long long)m * N + n, v);  // L2 reduction into the persistent zeroed workspace
           else
             y[(long long)m * N + n] = MT<T>::fromf(v);
@@ -269,9 +273,15 @@ __global__ void __launch_bounds__(WARPS * 32) nest_mma_kernel(
   const int nrows = min(ROWS_PER_BLOCK, N - n0);
   for (int e = threadIdx.x; e < M * nrows; e += blockDim.x) {
     const int m = e / nrows, n = n0 + e % nrows;
-    float* p = ws + (long long)m * N + n;
-    const float v = __ldcg(p);
-    __stcg(p, 0.f);  // leave the workspace zeroed for the next call
+    float v;
+    if (det) {
+      v = 0.f;
+      for (int sk = 0; sk < (int)gridDim.y; sk++) v += __ldcg(ws + ((long long)sk * M + m) * N + n);
+    } else {
+      float* p = ws + (long long)m * N + n;
+      v = __ldcg(p);
+      __stcg(p, 0.f);  // leave the workspace zeroed for the next call
+    }
     y[(long long)m * N + n] = MT<T>::fromf(v);
   }
   if (threadIdx.x == 0) counters[blockIdx.x] = 0;  // self-reset for the next call
@@ -279,7 +289,7 @@ __global__ void __launch_bounds__(WARPS * 32) nest_mma_kernel(
 
 template <typename T, int KP, int NT, int WARPS, int TPW, int KU>
 void launch_cfg(const torch::Tensor& x, const torch::Tensor& codes, const torch::Tensor& cb, const torch::Tensor& sc,
-                torch::Tensor& y, torch::Tensor& counters, torch::Tensor& ws, int M, int N, int K, int splits) {
+                torch::Tensor& y, torch::Tensor& counters, torch::Tensor& ws, int M, int N, int K, int splits, int det) {
   constexpr int R = repl_mma<KP>();
   constexpr int ROWS_PER_BLOCK = WARPS * TPW * 16;
   const int smem = KP * 256 * R * 16;
@@ -300,13 +310,15 @@ void launch_cfg(const torch::Tensor& x, const torch::Tensor& codes, const torch:
   splits = (nsup + per - 1) / per;
   TORCH_CHECK(counters.numel() >= nbN, "counter buffer too small");
   TORCH_CHECK(ws.numel() >= (long)M * N && ws.scalar_type() == at::kFloat, "workspace too small");
+  torch::Tensor wsd;  // deterministic mode: per-split partials [splits, M, N]
+  if (det && splits > 1) wsd = torch::empty({(long)splits * M * N}, x.options().dtype(torch::kFloat32));
   dim3 grid(nbN, splits);
   auto stream = at::cuda::getCurrentCUDAStream();
   kern<<<grid, WARPS * 32, smem, stream>>>(
       reinterpret_cast<const T*>(x.data_ptr()), reinterpret_cast<const uint32_t*>(codes.data_ptr()),
       reinterpret_cast<const uint4*>(cb.data_ptr()), reinterpret_cast<const T*>(sc.data_ptr()),
-      reinterpret_cast<T*>(y.data_ptr()), ws.data_ptr<float>(), counters.data_ptr<int>(), M,
-      N, K, per, (long long)N * K / 8 / 4);
+      reinterpret_cast<T*>(y.data_ptr()), (det && splits > 1) ? wsd.data_ptr<float>() : ws.data_ptr<float>(),
+      counters.data_ptr<int>(), M, N, K, per, (long long)N * K / 8 / 4, det);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
@@ -314,43 +326,43 @@ void launch_cfg(const torch::Tensor& x, const torch::Tensor& codes, const torch:
 // 7 = (8,4,1); 8 = (4,4,1); 9 = (4,1,4). 0 = auto (heuristic below).
 template <typename T, int KP, int NT>
 void launch(int cfg, const torch::Tensor& x, const torch::Tensor& codes, const torch::Tensor& cb,
-            const torch::Tensor& sc, torch::Tensor& y, torch::Tensor& cnt, torch::Tensor& ws, int M, int N, int K, int splits) {
+            const torch::Tensor& sc, torch::Tensor& y, torch::Tensor& cnt, torch::Tensor& ws, int M, int N, int K, int splits, int det) {
   if (cfg == 0)  // heuristic from the M3 sweep (Llama gate_up / q_o / down / k_v, bf16, graph_flush/read)
     cfg = N >= 8192 ? (KP <= 2 ? 2 : 8) : (N <= 2048 ? 4 : 2);
   switch (cfg) {
-    case 1: launch_cfg<T, KP, NT, 4, 2, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 2: launch_cfg<T, KP, NT, 8, 2, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 3: launch_cfg<T, KP, NT, 8, 2, 2>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 4: launch_cfg<T, KP, NT, 8, 1, 2>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 5: launch_cfg<T, KP, NT, 8, 1, 4>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 6: launch_cfg<T, KP, NT, 4, 2, 2>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 7: launch_cfg<T, KP, NT, 8, 4, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 8: launch_cfg<T, KP, NT, 4, 4, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 9: launch_cfg<T, KP, NT, 4, 1, 4>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
+    case 1: launch_cfg<T, KP, NT, 4, 2, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 2: launch_cfg<T, KP, NT, 8, 2, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 3: launch_cfg<T, KP, NT, 8, 2, 2>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 4: launch_cfg<T, KP, NT, 8, 1, 2>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 5: launch_cfg<T, KP, NT, 8, 1, 4>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 6: launch_cfg<T, KP, NT, 4, 2, 2>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 7: launch_cfg<T, KP, NT, 8, 4, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 8: launch_cfg<T, KP, NT, 4, 4, 1>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 9: launch_cfg<T, KP, NT, 4, 1, 4>(x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
     default: TORCH_CHECK(false, "unknown cfg ", cfg);
   }
 }
 
 template <typename T, int NT>
 void dispatch_k(int k, int cfg, const torch::Tensor& x, const torch::Tensor& codes, const torch::Tensor& cb,
-                const torch::Tensor& sc, torch::Tensor& y, torch::Tensor& cnt, torch::Tensor& ws, int M, int N, int K, int splits) {
+                const torch::Tensor& sc, torch::Tensor& y, torch::Tensor& cnt, torch::Tensor& ws, int M, int N, int K, int splits, int det) {
   switch (k) {
-    case 1: launch<T, 1, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 2: launch<T, 2, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 3: launch<T, 3, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 4: launch<T, 4, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
-    case 5: launch<T, 5, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits); break;
+    case 1: launch<T, 1, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 2: launch<T, 2, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 3: launch<T, 3, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 4: launch<T, 4, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
+    case 5: launch<T, 5, NT>(cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det); break;
     default: TORCH_CHECK(false, "prefix k must be in [1, 5], got ", k);
   }
 }
 
 template <typename T>
 void dispatch_m(int k, int cfg, const torch::Tensor& x, const torch::Tensor& codes, const torch::Tensor& cb,
-                const torch::Tensor& sc, torch::Tensor& y, torch::Tensor& cnt, torch::Tensor& ws, int M, int N, int K, int splits) {
+                const torch::Tensor& sc, torch::Tensor& y, torch::Tensor& cnt, torch::Tensor& ws, int M, int N, int K, int splits, int det) {
   if (M <= 8)
-    dispatch_k<T, 1>(k, cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits);
+    dispatch_k<T, 1>(k, cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det);
   else
-    dispatch_k<T, 2>(k, cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits);
+    dispatch_k<T, 2>(k, cfg, x, codes, cb, sc, y, cnt, ws, M, N, K, splits, det);
 }
 
 }  // namespace
@@ -359,7 +371,7 @@ void dispatch_m(int k, int cfg, const torch::Tensor& x, const torch::Tensor& cod
 // counters int32 zero-initialised buffer (>= ceil(N/ROWS_PER_BLOCK) entries, reset by the kernel). Returns y [M, N].
 torch::Tensor nest_mma(torch::Tensor x, torch::Tensor codes, torch::Tensor codebooks, torch::Tensor scales,
                        torch::Tensor counters, torch::Tensor ws, int64_t N, int64_t k, int64_t splits,
-                       int64_t cfg) {
+                       int64_t cfg, int64_t det) {
   const at::cuda::OptionalCUDAGuard guard(device_of(x));
   TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.is_contiguous(), "x must be contiguous CUDA [M, K]");
   const int M = x.size(0), K = x.size(1);
@@ -377,9 +389,9 @@ torch::Tensor nest_mma(torch::Tensor x, torch::Tensor codes, torch::Tensor codeb
   TORCH_CHECK(counters.scalar_type() == at::kInt && counters.is_cuda(), "counters int32 CUDA");
   auto y = torch::empty({M, (long)N}, x.options());
   if (x.scalar_type() == at::kBFloat16)
-    dispatch_m<__nv_bfloat16>(k, cfg, x, codes, codebooks, scales, y, counters, ws, M, N, K, splits);
+    dispatch_m<__nv_bfloat16>(k, cfg, x, codes, codebooks, scales, y, counters, ws, M, N, K, splits, (int)det);
   else if (x.scalar_type() == at::kHalf)
-    dispatch_m<half>(k, cfg, x, codes, codebooks, scales, y, counters, ws, M, N, K, splits);
+    dispatch_m<half>(k, cfg, x, codes, codebooks, scales, y, counters, ws, M, N, K, splits, (int)det);
   else
     TORCH_CHECK(false, "dtype must be bf16 or fp16");
   return y;
