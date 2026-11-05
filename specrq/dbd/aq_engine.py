@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 import random
 from argparse import Namespace
 from typing import Optional, Sequence, Union
@@ -10,6 +11,7 @@ import torch.nn as nn
 from torch.nn.parallel.scatter_gather import Gather
 
 from src.aq import QuantizedWeight
+from src.hadamard import make_signs, pick_block_size, rotate_weight, rotate_xtx
 from src.utils import ellipsis
 
 
@@ -28,6 +30,15 @@ class AQEngine(nn.Module):
         self.nsamples = 0
         # Matryoshka weights alpha_k (one per codebook prefix k=1..M); set from args.codebook_weights in quantize()
         self.codebook_weights: Sequence[float] = (0.0, 0.0, 0.5, 0.0, 0.5)
+        # [specrq] optional block-Hadamard rotation (DbD Alg. 1): set hadamard_seed before quantize() to enable
+        self.hadamard_seed: Optional[int] = None
+        self.rotation_signs: Optional[torch.Tensor] = None
+        self.hadamard_block_size: int = 1
+        self.rotated_weight: Optional[torch.Tensor] = None
+
+    def _reference_weight(self) -> torch.Tensor:
+        """Weight the codes approximate: W (default) or W R^T when the Hadamard rotation is enabled."""
+        return self.layer.weight.detach() if self.rotated_weight is None else self.rotated_weight
 
     @torch.no_grad()
     def add_batch(self, inp: torch.Tensor):
@@ -48,10 +59,17 @@ class AQEngine(nn.Module):
         """create a QuantizedLinear with specified args based on the collected hessian (XTX) data"""
         if getattr(args, "codebook_weights", None) is not None:
             self.codebook_weights = tuple(float(w) for w in args.codebook_weights)
+        if self.hadamard_seed is not None:
+            block_size = pick_block_size(self.columns)
+            if block_size > 1:
+                signs = make_signs(self.columns, self.hadamard_seed, device=self.device)
+                self.rotation_signs, self.hadamard_block_size = signs, block_size
+                self.rotated_weight = rotate_weight(self.layer.weight.detach().float(), signs, block_size)
+                self.XTX.copy_(rotate_xtx(self.XTX, signs, block_size))
         assert isinstance(args.devices, (list, tuple)) and len(args.devices) >= 1, f"Found devices = {args.devices}"
         assert args.devices[0] == self.device, (args.devices[0], self.XTX.device)
         self.quantized_weight = QuantizedWeight(
-            reference_weight=self.layer.weight.detach().to(device=self.device, dtype=torch.float32),
+            reference_weight=self._reference_weight().to(device=self.device, dtype=torch.float32),
             out_group_size=args.out_group_size,
             in_group_size=args.in_group_size,
             num_codebooks=args.num_codebooks,
@@ -76,7 +94,10 @@ class AQEngine(nn.Module):
             replicas[0] = self
 
         previous_best_loss = float("inf")  # for early stopping
+        t_start = time.perf_counter()
         for epoch in range(args.max_epochs):
+            if verbose:
+                print(f"[specrq] aq_epoch_start epoch={epoch} t={time.perf_counter() - t_start:.2f}s")
             # train codebooks and scales
             for step in range(args.steps_per_epoch):
                 if len(args.devices) == 1:
@@ -138,14 +159,14 @@ class AQEngine(nn.Module):
         assert self.quantized_weight is not None, "must be called inside / after AQUtil.quantize"
 
         if isinstance(selection, ellipsis):
-            reference_weight = self.layer.weight.detach().to(self.quantized_weight.codebooks.dtype)
+            reference_weight = self._reference_weight().to(self.quantized_weight.codebooks.dtype)
         else:
             assert isinstance(selection, slice)
             out_channel_selection = slice(
                 selection.start * self.quantized_weight.out_group_size,
                 selection.stop * self.quantized_weight.out_group_size,
             )
-            reference_weight = self.layer.weight.detach()[out_channel_selection].to(self.quantized_weight.codebooks.dtype)
+            reference_weight = self._reference_weight()[out_channel_selection].to(self.quantized_weight.codebooks.dtype)
         
         total_codebooks = self.quantized_weight.num_codebooks
         
@@ -204,7 +225,7 @@ class AQEngine(nn.Module):
             selection.start * self.quantized_weight.out_group_size,
             selection.stop * self.quantized_weight.out_group_size,
         )
-        reference_weight = self.layer.weight.detach()[out_channel_selection].to(dtype)
+        reference_weight = self._reference_weight()[out_channel_selection].to(dtype)
         return self.quantized_weight.beam_search_update_codes_(
             XTX=self.XTX.to(dtype), reference_weight=reference_weight, selection=selection, **kwargs
         ).clone()
@@ -224,7 +245,7 @@ class AQEngine(nn.Module):
             dtype = self.quantized_weight.codebooks.dtype
             self.quantized_weight.beam_search_update_codes_(
                 XTX=self.XTX.to(dtype),
-                reference_weight=self.layer.weight.detach().to(dtype),
+                reference_weight=self._reference_weight().to(dtype),
                 dim_rng=random.Random(seed),
                 **kwargs,
             )

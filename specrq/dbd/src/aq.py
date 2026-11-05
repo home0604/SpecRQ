@@ -12,6 +12,7 @@ from tqdm.auto import trange
 from src.beam_search_l2 import beam_search_optimal_codes as beam_search_minimize_weight_mse
 from src.beam_search_xtx import beam_search_optimal_codes as beam_search_minimize_activation_mse
 from src.kmeans import find_nearest_cluster, fit_faiss_kmeans, fit_kmeans, fit_kmeans_1d
+from src.hadamard import rotate_input
 from src.utils import IntCodes, _dequantize_weight, ellipsis, is_signed
 
 
@@ -22,9 +23,21 @@ class QuantizedLinear(nn.Module):
         self.quantized_weight = quantized_weight
         self.bias = bias
         self.use_checkpoint = False
+        # [specrq] optional block-Hadamard input rotation (DbD Alg. 4) and prefix-k evaluation
+        self.register_buffer("rotation_signs", None)
+        self.hadamard_block_size: int = 1
+        self.active_num_codebooks: Optional[int] = None
+
+    def set_rotation(self, signs: Optional[torch.Tensor], block_size: int):
+        self.rotation_signs = signs  # registered buffer (None or tensor)
+        self.hadamard_block_size = int(block_size)
 
     def _forward(self, input: torch.Tensor):
-        return F.linear(input, self.quantized_weight(), self.bias)
+        signs = getattr(self, "rotation_signs", None)
+        if signs is not None:
+            input = rotate_input(input, signs, getattr(self, "hadamard_block_size", 1))
+        weight = self.quantized_weight(num_codebooks=getattr(self, "active_num_codebooks", None))
+        return F.linear(input, weight, self.bias)
 
     def forward(self, input: torch.Tensor):
         if getattr(self, "use_checkpoint", False) and torch.is_grad_enabled():

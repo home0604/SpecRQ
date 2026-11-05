@@ -83,7 +83,7 @@ under `/hai/home/lsh/SpecRQ`. Heavy outputs (codebook ckpts, wandb, scratch) go 
 | What | Path | Notes |
 |---|---|---|
 | Base models | `/data/models/{llama2_7b, llama3_3b, llama3_8b, mistral_7b}` | local disk (`/data`, 23 TB free) |
-| Weight-VQ models (to download) | `/data/models/{qwen2.5_0.5b_instruct, llama3.1_8b_instruct}` | pin HF revision; record it in results |
+| Weight-VQ models | `/data/models/qwen2.5_0.5b_instruct` (rev 7ae5576), `/data/models/llama3.1_8b_instruct` (rev 0e9e39f, 4 safetensors shards, 15 GB) | `REVISION.txt` in each dir; downloaded 2026-11-05 |
 | Llama-3-8B Meta weights | `/data/models/llama3_8b/consolidated.00.pth`, `tokenizer.model` | `original/` holds only `config.json`; HF safetensors shards absent |
 | Llama-3.2-3B | `/data/models/llama3_3b` (HF safetensors + `original/` Meta) | 28 layers, 8 KV heads; **no builder in the current VQLLM clone** |
 | Llama-2-7B / Mistral-7B | HF `.bin` + safetensors | MHA (Llama-2) is the planned primary model |

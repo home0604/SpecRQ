@@ -14,6 +14,7 @@ from aq_engine import AQEngine
 from src.aq import QuantizedLinear
 from src.datautils import get_loaders
 from src.finetune import finetune_groupwise
+from src.hadamard import layer_seed
 from src.modelutils import (
     FALCON_TYPES,
     find_sublayers,
@@ -192,6 +193,9 @@ def quantize_aq(model: PreTrainedModel, data: Sequence, val_data: Optional[Seque
     layers = get_layers(model)
 
     for layer_index in range(len(layers)):
+        if args.quantize_num_layers is not None and layer_index >= args.quantize_num_layers:
+            print(f"[specrq] --quantize_num_layers={args.quantize_num_layers}: stopping before layer {layer_index}")
+            break
         print(f"\n---------------- Layer {layer_index} of {len(layers)} ----------------")
         stats_payload = {}
         start_time = time.time()
@@ -268,6 +272,8 @@ def quantize_aq(model: PreTrainedModel, data: Sequence, val_data: Optional[Seque
                     else:
                         args.num_codebooks = num_codebooks
                     print(sublayer_name.lower(), " mixtral num codebooks", args.num_codebooks)
+                if args.hadamard:
+                    aq_handlers[sublayer_name].hadamard_seed = layer_seed(args.seed, layer_index, sublayer_name)
                 quantized_weight = aq_handlers[sublayer_name].quantize(args=args, verbose=True)
 
                 with torch.no_grad():
@@ -276,6 +282,11 @@ def quantize_aq(model: PreTrainedModel, data: Sequence, val_data: Optional[Seque
                     )  # test that this is not a replica
 
                     new_linear = QuantizedLinear(quantized_weight, aq_handlers[sublayer_name].layer.bias)
+                    if aq_handlers[sublayer_name].rotation_signs is not None:
+                        new_linear.set_rotation(
+                            aq_handlers[sublayer_name].rotation_signs, aq_handlers[sublayer_name].hadamard_block_size
+                        )
+                        print(f"hadamard {sublayer_name}: block={new_linear.hadamard_block_size}")
                     if args.use_checkpointing:
                         new_linear.use_checkpoint = True
                         print("ENABLED CHECKPOINTING FOR", sublayer_name)
@@ -686,6 +697,24 @@ def main():
         help="Drop-by-Drop Matryoshka weights alpha_k for prefixes k=1..num_codebooks (default 35W)",
     )
     parser.add_argument(
+        "--hadamard",
+        action="store_true",
+        help="[specrq] DbD block-Hadamard rotation: random signs + block FWHT on each linear's input dim",
+    )
+    parser.add_argument(
+        "--eval_num_codebooks",
+        type=int,
+        nargs="+",
+        default=None,
+        help="[specrq] evaluate perplexity with prefix k codebooks (one eval per k); default: all codebooks",
+    )
+    parser.add_argument(
+        "--quantize_num_layers",
+        type=int,
+        default=None,
+        help="[specrq] quantize only the first N decoder layers, then stop (timing runs; skips evaluation)",
+    )
+    parser.add_argument(
         "--nbits_per_codebook",
         type=int,
         default=16,
@@ -904,11 +933,16 @@ def main():
         print("\n============ Quantizing model... ============")
         quantize_model(model, args)
 
+    if args.quantize_num_layers is not None:
+        print("[specrq] partial quantization run; skipping evaluation")
+        return
+
     print("\n============ Evaluating perplexity... ============")
     torch.cuda.reset_peak_memory_stats()
     datasets = ["wikitext2", "c4"]
     if args.new_eval:
         datasets = ["wikitext2", "c4-new"]
+    eval_ks = args.eval_num_codebooks if args.eval_num_codebooks is not None else [None]
     for dataset in datasets:
         testloader = get_loaders(
             dataset,
@@ -919,8 +953,16 @@ def main():
             use_fast_tokenizer=args.use_fast_tokenizer,
             trust_remote_code=args.trust_remote_code,
         )
-        args.dataset_name = dataset
-        perplexity_eval(model, testloader, args)
+        for k in eval_ks:
+            n_set = 0
+            for module in model.modules():
+                if isinstance(module, QuantizedLinear):
+                    module.active_num_codebooks = k
+                    n_set += 1
+            print(f"[specrq] eval {dataset} with num_codebooks={k if k is not None else 'all'} ({n_set} QuantizedLinear)")
+            args.dataset_name = dataset
+            ppl = perplexity_eval(model, testloader, args)
+            print(f"[specrq] RESULT dataset={dataset} k={k if k is not None else 'all'} ppl={ppl:.4f}")
 
     print(f"eval: {torch.cuda.max_memory_allocated()=:,}")
     if args.wandb:
