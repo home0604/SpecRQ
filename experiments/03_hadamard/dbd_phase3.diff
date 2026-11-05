@@ -1,0 +1,333 @@
+diff --git a/specrq/dbd/aq_engine.py b/specrq/dbd/aq_engine.py
+index 098ff94..5c9336a 100644
+--- a/specrq/dbd/aq_engine.py
++++ b/specrq/dbd/aq_engine.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import math
++import time
+ import random
+ from argparse import Namespace
+ from typing import Optional, Sequence, Union
+@@ -10,6 +11,7 @@ import torch.nn as nn
+ from torch.nn.parallel.scatter_gather import Gather
+ 
+ from src.aq import QuantizedWeight
++from src.hadamard import make_signs, pick_block_size, rotate_weight, rotate_xtx
+ from src.utils import ellipsis
+ 
+ 
+@@ -28,6 +30,15 @@ class AQEngine(nn.Module):
+         self.nsamples = 0
+         # Matryoshka weights alpha_k (one per codebook prefix k=1..M); set from args.codebook_weights in quantize()
+         self.codebook_weights: Sequence[float] = (0.0, 0.0, 0.5, 0.0, 0.5)
++        # [specrq] optional block-Hadamard rotation (DbD Alg. 1): set hadamard_seed before quantize() to enable
++        self.hadamard_seed: Optional[int] = None
++        self.rotation_signs: Optional[torch.Tensor] = None
++        self.hadamard_block_size: int = 1
++        self.rotated_weight: Optional[torch.Tensor] = None
++
++    def _reference_weight(self) -> torch.Tensor:
++        """Weight the codes approximate: W (default) or W R^T when the Hadamard rotation is enabled."""
++        return self.layer.weight.detach() if self.rotated_weight is None else self.rotated_weight
+ 
+     @torch.no_grad()
+     def add_batch(self, inp: torch.Tensor):
+@@ -48,10 +59,17 @@ class AQEngine(nn.Module):
+         """create a QuantizedLinear with specified args based on the collected hessian (XTX) data"""
+         if getattr(args, "codebook_weights", None) is not None:
+             self.codebook_weights = tuple(float(w) for w in args.codebook_weights)
++        if self.hadamard_seed is not None:
++            block_size = pick_block_size(self.columns)
++            if block_size > 1:
++                signs = make_signs(self.columns, self.hadamard_seed, device=self.device)
++                self.rotation_signs, self.hadamard_block_size = signs, block_size
++                self.rotated_weight = rotate_weight(self.layer.weight.detach().float(), signs, block_size)
++                self.XTX.copy_(rotate_xtx(self.XTX, signs, block_size))
+         assert isinstance(args.devices, (list, tuple)) and len(args.devices) >= 1, f"Found devices = {args.devices}"
+         assert args.devices[0] == self.device, (args.devices[0], self.XTX.device)
+         self.quantized_weight = QuantizedWeight(
+-            reference_weight=self.layer.weight.detach().to(device=self.device, dtype=torch.float32),
++            reference_weight=self._reference_weight().to(device=self.device, dtype=torch.float32),
+             out_group_size=args.out_group_size,
+             in_group_size=args.in_group_size,
+             num_codebooks=args.num_codebooks,
+@@ -76,7 +94,10 @@ class AQEngine(nn.Module):
+             replicas[0] = self
+ 
+         previous_best_loss = float("inf")  # for early stopping
++        t_start = time.perf_counter()
+         for epoch in range(args.max_epochs):
++            if verbose:
++                print(f"[specrq] aq_epoch_start epoch={epoch} t={time.perf_counter() - t_start:.2f}s")
+             # train codebooks and scales
+             for step in range(args.steps_per_epoch):
+                 if len(args.devices) == 1:
+@@ -138,14 +159,14 @@ class AQEngine(nn.Module):
+         assert self.quantized_weight is not None, "must be called inside / after AQUtil.quantize"
+ 
+         if isinstance(selection, ellipsis):
+-            reference_weight = self.layer.weight.detach().to(self.quantized_weight.codebooks.dtype)
++            reference_weight = self._reference_weight().to(self.quantized_weight.codebooks.dtype)
+         else:
+             assert isinstance(selection, slice)
+             out_channel_selection = slice(
+                 selection.start * self.quantized_weight.out_group_size,
+                 selection.stop * self.quantized_weight.out_group_size,
+             )
+-            reference_weight = self.layer.weight.detach()[out_channel_selection].to(self.quantized_weight.codebooks.dtype)
++            reference_weight = self._reference_weight()[out_channel_selection].to(self.quantized_weight.codebooks.dtype)
+         
+         total_codebooks = self.quantized_weight.num_codebooks
+         
+@@ -204,7 +225,7 @@ class AQEngine(nn.Module):
+             selection.start * self.quantized_weight.out_group_size,
+             selection.stop * self.quantized_weight.out_group_size,
+         )
+-        reference_weight = self.layer.weight.detach()[out_channel_selection].to(dtype)
++        reference_weight = self._reference_weight()[out_channel_selection].to(dtype)
+         return self.quantized_weight.beam_search_update_codes_(
+             XTX=self.XTX.to(dtype), reference_weight=reference_weight, selection=selection, **kwargs
+         ).clone()
+@@ -224,7 +245,7 @@ class AQEngine(nn.Module):
+             dtype = self.quantized_weight.codebooks.dtype
+             self.quantized_weight.beam_search_update_codes_(
+                 XTX=self.XTX.to(dtype),
+-                reference_weight=self.layer.weight.detach().to(dtype),
++                reference_weight=self._reference_weight().to(dtype),
+                 dim_rng=random.Random(seed),
+                 **kwargs,
+             )
+diff --git a/specrq/dbd/main.py b/specrq/dbd/main.py
+index 738b301..31f2b1c 100644
+--- a/specrq/dbd/main.py
++++ b/specrq/dbd/main.py
+@@ -14,6 +14,7 @@ from aq_engine import AQEngine
+ from src.aq import QuantizedLinear
+ from src.datautils import get_loaders
+ from src.finetune import finetune_groupwise
++from src.hadamard import layer_seed
+ from src.modelutils import (
+     FALCON_TYPES,
+     find_sublayers,
+@@ -192,6 +193,9 @@ def quantize_aq(model: PreTrainedModel, data: Sequence, val_data: Optional[Seque
+     layers = get_layers(model)
+ 
+     for layer_index in range(len(layers)):
++        if args.quantize_num_layers is not None and layer_index >= args.quantize_num_layers:
++            print(f"[specrq] --quantize_num_layers={args.quantize_num_layers}: stopping before layer {layer_index}")
++            break
+         print(f"\n---------------- Layer {layer_index} of {len(layers)} ----------------")
+         stats_payload = {}
+         start_time = time.time()
+@@ -268,6 +272,8 @@ def quantize_aq(model: PreTrainedModel, data: Sequence, val_data: Optional[Seque
+                     else:
+                         args.num_codebooks = num_codebooks
+                     print(sublayer_name.lower(), " mixtral num codebooks", args.num_codebooks)
++                if args.hadamard:
++                    aq_handlers[sublayer_name].hadamard_seed = layer_seed(args.seed, layer_index, sublayer_name)
+                 quantized_weight = aq_handlers[sublayer_name].quantize(args=args, verbose=True)
+ 
+                 with torch.no_grad():
+@@ -276,6 +282,11 @@ def quantize_aq(model: PreTrainedModel, data: Sequence, val_data: Optional[Seque
+                     )  # test that this is not a replica
+ 
+                     new_linear = QuantizedLinear(quantized_weight, aq_handlers[sublayer_name].layer.bias)
++                    if aq_handlers[sublayer_name].rotation_signs is not None:
++                        new_linear.set_rotation(
++                            aq_handlers[sublayer_name].rotation_signs, aq_handlers[sublayer_name].hadamard_block_size
++                        )
++                        print(f"hadamard {sublayer_name}: block={new_linear.hadamard_block_size}")
+                     if args.use_checkpointing:
+                         new_linear.use_checkpoint = True
+                         print("ENABLED CHECKPOINTING FOR", sublayer_name)
+@@ -685,6 +696,24 @@ def main():
+         default=[0.0, 0.0, 0.5, 0.0, 0.5],
+         help="Drop-by-Drop Matryoshka weights alpha_k for prefixes k=1..num_codebooks (default 35W)",
+     )
++    parser.add_argument(
++        "--hadamard",
++        action="store_true",
++        help="[specrq] DbD block-Hadamard rotation: random signs + block FWHT on each linear's input dim",
++    )
++    parser.add_argument(
++        "--eval_num_codebooks",
++        type=int,
++        nargs="+",
++        default=None,
++        help="[specrq] evaluate perplexity with prefix k codebooks (one eval per k); default: all codebooks",
++    )
++    parser.add_argument(
++        "--quantize_num_layers",
++        type=int,
++        default=None,
++        help="[specrq] quantize only the first N decoder layers, then stop (timing runs; skips evaluation)",
++    )
+     parser.add_argument(
+         "--nbits_per_codebook",
+         type=int,
+@@ -904,11 +933,16 @@ def main():
+         print("\n============ Quantizing model... ============")
+         quantize_model(model, args)
+ 
++    if args.quantize_num_layers is not None:
++        print("[specrq] partial quantization run; skipping evaluation")
++        return
++
+     print("\n============ Evaluating perplexity... ============")
+     torch.cuda.reset_peak_memory_stats()
+     datasets = ["wikitext2", "c4"]
+     if args.new_eval:
+         datasets = ["wikitext2", "c4-new"]
++    eval_ks = args.eval_num_codebooks if args.eval_num_codebooks is not None else [None]
+     for dataset in datasets:
+         testloader = get_loaders(
+             dataset,
+@@ -919,8 +953,16 @@ def main():
+             use_fast_tokenizer=args.use_fast_tokenizer,
+             trust_remote_code=args.trust_remote_code,
+         )
+-        args.dataset_name = dataset
+-        perplexity_eval(model, testloader, args)
++        for k in eval_ks:
++            n_set = 0
++            for module in model.modules():
++                if isinstance(module, QuantizedLinear):
++                    module.active_num_codebooks = k
++                    n_set += 1
++            print(f"[specrq] eval {dataset} with num_codebooks={k if k is not None else 'all'} ({n_set} QuantizedLinear)")
++            args.dataset_name = dataset
++            ppl = perplexity_eval(model, testloader, args)
++            print(f"[specrq] RESULT dataset={dataset} k={k if k is not None else 'all'} ppl={ppl:.4f}")
+ 
+     print(f"eval: {torch.cuda.max_memory_allocated()=:,}")
+     if args.wandb:
+diff --git a/specrq/dbd/src/aq.py b/specrq/dbd/src/aq.py
+index 1585f3d..468b26d 100644
+--- a/specrq/dbd/src/aq.py
++++ b/specrq/dbd/src/aq.py
+@@ -12,6 +12,7 @@ from tqdm.auto import trange
+ from src.beam_search_l2 import beam_search_optimal_codes as beam_search_minimize_weight_mse
+ from src.beam_search_xtx import beam_search_optimal_codes as beam_search_minimize_activation_mse
+ from src.kmeans import find_nearest_cluster, fit_faiss_kmeans, fit_kmeans, fit_kmeans_1d
++from src.hadamard import rotate_input
+ from src.utils import IntCodes, _dequantize_weight, ellipsis, is_signed
+ 
+ 
+@@ -22,9 +23,21 @@ class QuantizedLinear(nn.Module):
+         self.quantized_weight = quantized_weight
+         self.bias = bias
+         self.use_checkpoint = False
++        # [specrq] optional block-Hadamard input rotation (DbD Alg. 4) and prefix-k evaluation
++        self.register_buffer("rotation_signs", None)
++        self.hadamard_block_size: int = 1
++        self.active_num_codebooks: Optional[int] = None
++
++    def set_rotation(self, signs: Optional[torch.Tensor], block_size: int):
++        self.rotation_signs = signs  # registered buffer (None or tensor)
++        self.hadamard_block_size = int(block_size)
+ 
+     def _forward(self, input: torch.Tensor):
+-        return F.linear(input, self.quantized_weight(), self.bias)
++        signs = getattr(self, "rotation_signs", None)
++        if signs is not None:
++            input = rotate_input(input, signs, getattr(self, "hadamard_block_size", 1))
++        weight = self.quantized_weight(num_codebooks=getattr(self, "active_num_codebooks", None))
++        return F.linear(input, weight, self.bias)
+ 
+     def forward(self, input: torch.Tensor):
+         if getattr(self, "use_checkpoint", False) and torch.is_grad_enabled():
+diff --git a/specrq/dbd/src/hadamard.py b/specrq/dbd/src/hadamard.py
+new file mode 100644
+index 0000000..7544d02
+--- /dev/null
++++ b/specrq/dbd/src/hadamard.py
+@@ -0,0 +1,87 @@
++"""[specrq] Block Walsh-Hadamard rotation for Drop-by-Drop (arXiv 2606.12876, Alg. 1/2/4).
++
++Per linear layer y = W x (W: d_out x d_in):
++    R = blockdiag(H_B, ..., H_B) @ diag(S),  H_B = orthonormal Sylvester Hadamard (H_B = H_B^T, H_B H_B = I)
++    W' = W R^T  <=>  row-wise  w' = BlockFWHT(w * S)          (Alg. 1 line 7)
++    XX^T' = R XX^T R^T                                        (Alg. 1 line 8)
++    inference: x' = R x = BlockFWHT(x * S), y = W' x'         (Alg. 4 lines 10-15)
++so W' x' = W R^T R x = W x exactly (up to floating point).
++B_H = largest of {256, 128, 64, 32} dividing d_in, else 1 (= no rotation).
++The paper does not state the normalization; 1/sqrt(B) is required for W' x' == W x.
++"""
++from __future__ import annotations
++
++import functools
++import zlib
++from typing import Optional
++
++import torch
++
++BLOCK_CANDIDATES = (256, 128, 64, 32)
++
++
++def pick_block_size(d_in: int) -> int:
++    for b in BLOCK_CANDIDATES:
++        if d_in % b == 0:
++            return b
++    return 1
++
++
++@functools.lru_cache(maxsize=None)
++def _hadamard_cpu(b: int) -> torch.Tensor:
++    h = torch.ones(1, 1, dtype=torch.float64)
++    while h.shape[0] < b:
++        h = torch.cat([torch.cat([h, h], 1), torch.cat([h, -h], 1)], 0)
++    assert h.shape[0] == b, f"block size {b} must be a power of two"
++    return h / (b**0.5)
++
++
++def hadamard_matrix(b: int, device, dtype) -> torch.Tensor:
++    return _hadamard_cpu(b).to(device=device, dtype=dtype)
++
++
++def block_fwht(x: torch.Tensor, block_size: int) -> torch.Tensor:
++    """Apply blockdiag(H_B) along the last dim (orthonormal, symmetric). Computed in fp32 or wider."""
++    if block_size <= 1:
++        return x
++    d = x.shape[-1]
++    assert d % block_size == 0, (d, block_size)
++    cdtype = torch.float64 if x.dtype == torch.float64 else torch.float32
++    h = hadamard_matrix(block_size, x.device, cdtype)
++    y = x.to(cdtype).reshape(*x.shape[:-1], d // block_size, block_size) @ h  # H symmetric -> x_blk @ H = (H x_blk)
++    return y.reshape(x.shape).to(x.dtype)
++
++
++def make_signs(d_in: int, seed: int, device=None) -> torch.Tensor:
++    g = torch.Generator(device="cpu").manual_seed(seed)
++    s = torch.randint(0, 2, (d_in,), generator=g, dtype=torch.int64) * 2 - 1
++    return s.to(dtype=torch.float32, device=device)
++
++
++def layer_seed(base_seed: int, layer_index: int, name: str) -> int:
++    return zlib.crc32(f"{base_seed}:{layer_index}:{name}".encode()) & 0x7FFFFFFF
++
++
++def rotate_weight(w: torch.Tensor, signs: torch.Tensor, block_size: int) -> torch.Tensor:
++    """W' = W R^T (row-wise BlockFWHT(w * S)). No-op when block_size <= 1 (paper: B_H = 1 -> no rotation)."""
++    if block_size <= 1:
++        return w
++    return block_fwht(w * signs.to(w.device, w.dtype), block_size)
++
++
++def rotate_xtx(xtx: torch.Tensor, signs: torch.Tensor, block_size: int) -> torch.Tensor:
++    """XX^T' = R XX^T R^T. No-op when block_size <= 1."""
++    if block_size <= 1:
++        return xtx
++    s = signs.to(xtx.device, xtx.dtype)
++    a = xtx * s[:, None] * s[None, :]
++    a = block_fwht(a, block_size)  # right-multiply by H (columns)
++    a = block_fwht(a.transpose(0, 1).contiguous(), block_size).transpose(0, 1)  # left-multiply by H (rows)
++    return a.contiguous()
++
++
++def rotate_input(x: torch.Tensor, signs: Optional[torch.Tensor], block_size: int) -> torch.Tensor:
++    """x' = R x = BlockFWHT(x * S) along the last dim (online, Alg. 4)."""
++    if signs is None or block_size <= 1:
++        return x
++    return block_fwht(x * signs.to(x.device, x.dtype), block_size)

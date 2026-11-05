@@ -1,0 +1,61 @@
+{
+ "exp": "E2",
+ "run": "qwen05_c1_35w_tiny_smoke_draftk_ppl",
+ "time": "2026-11-05T18:27:51",
+ "commit": "37f75d0",
+ "dirty_files": 7,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "setting": "C1 smoke ckpt prefix-k eval",
+  "d": 8,
+  "K": 256,
+  "L": 5,
+  "k": [
+   5,
+   3
+  ],
+  "ckpt": "/data/lsh/ckpts/weightvq/smoke/qwen05_c1_35w_tiny",
+  "seqlen": 512,
+  "cmd": "main.py ... --load <ckpt> --model_seqlen=512 --eval_num_codebooks 5 3",
+  "logs": [
+   "/data/lsh/logs/e2_draftk_eval_smoke.log",
+   "/data/lsh/logs/e2_draftk_diag.log"
+  ]
+ },
+ "metrics": {
+  "target_quality": {
+   "ppl_wikitext2_k5": 21.8891,
+   "ppl_c4_k5": 26.3569,
+   "ppl_wikitext2_k3": 5366.4258,
+   "ppl_c4_k3": 3857.6462,
+   "fp16_ppl_wikitext2": 18.8076,
+   "fp16_ppl_c4": 22.5855
+  },
+  "diag_wikitext2_first80win": {
+   "all_k5": 21.30807876586914,
+   "all_k4": 25.32532501220703,
+   "all_k3": 4850.0341796875,
+   "all_k2": 58598.54296875,
+   "k3_but_o_proj_k5": 5175.44482421875,
+   "k3_but_down_proj_k5": 41.536231994628906,
+   "k3_but_L11_o_proj_k5": 4738.9443359375,
+   "k3_but_outliers_k5": 51.29697799682617,
+   "k3_attn_only": 25.357908248901367,
+   "k3_mlp_only": 2525.6259765625
+  }
+ },
+ "notes": "k=5 reproduces the in-run eval exactly. k=3 collapses; diag: keeping down_proj at k=5 -> 41.5 (80 windows). Tiny-training ckpt, not a quality result."
+}

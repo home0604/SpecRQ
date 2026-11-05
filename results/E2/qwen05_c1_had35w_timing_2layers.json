@@ -1,0 +1,106 @@
+{
+ "exp": "E2",
+ "run": "qwen05_c1_had35w_timing_2layers",
+ "time": "2026-11-05T18:53:39",
+ "commit": "52df8b4",
+ "dirty_files": 10,
+ "host": "shark",
+ "cuda_visible_devices": "0",
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "setting": "DbD quantize.sh settings, first 2 layers only, Hadamard+35W",
+  "d": 8,
+  "K": 256,
+  "L": 5,
+  "nsamples": 1024,
+  "val_size": 32,
+  "model_seqlen": 4096,
+  "steps_per_epoch": 100,
+  "relative_mse_tolerance": 0.01,
+  "beam_size": 1,
+  "finetune": {
+   "batch": 32,
+   "max_epochs": 10,
+   "early_stop": 3,
+   "keep_best": true
+  },
+  "offload_activations": true,
+  "calib": "wikitext2",
+  "script": "experiments/03_hadamard/run_timing.sh",
+  "log": "/data/lsh/logs/e2_qwen05_timing_2layers.log",
+  "gpumem_csv": "/data/lsh/ckpts/weightvq/timing/qwen05_c1_had35w_2layers.gpumem.csv"
+ },
+ "metrics": {
+  "layer_time_s": [
+   761.5,
+   671.9
+  ],
+  "wall_total_s": 1477.95,
+  "phase_s_layer0": {
+   "xtx_pass": 198,
+   "aq": 250,
+   "finetune": 310
+  },
+  "phase_s_layer1": {
+   "xtx_pass": 198,
+   "aq": 190,
+   "finetune": "~420 incl. tail"
+  },
+  "aq_epochs_to_converge": {
+   "L0": {
+    "q": 7,
+    "k": 8,
+    "v": 4,
+    "o": 5,
+    "gate": 4,
+    "up": 3,
+    "down": 4
+   },
+   "L1": {
+    "q": 4,
+    "k": 4,
+    "v": 4,
+    "o": 5,
+    "gate": 4,
+    "up": 3,
+    "down": 3
+   }
+  },
+  "aq_s_per_epoch_L1": {
+   "q": 1.96,
+   "gate": 7.6,
+   "down": 37.6
+  },
+  "finetune_epochs_run": [
+   10,
+   10
+  ],
+  "finetune_best_epoch": [
+   9,
+   9
+  ],
+  "finetune_s_per_epoch_approx": 31,
+  "gpu_mem_peak_mib_nvsmi_10s": 2032,
+  "host_maxrss_gib": 18.5,
+  "out_loss": [
+   0.00321,
+   0.00147
+  ],
+  "rtx4090_matmul_tflops": {
+   "fp64": 1.21,
+   "fp32_no_tf32": 52.26
+  }
+ },
+ "notes": "Phase split from nvidia-smi utilization timeline (10 s samples) and log order; approximate. XTX accumulation and AQ loss run in float64."
+}
