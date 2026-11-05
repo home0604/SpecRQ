@@ -4,12 +4,20 @@ This file provides guidance to Claude Code when working in this repository.
 
 ## Project
 
-**Format-Aware Asymmetric Residual Quantization for Self-Speculative Decoding.**
-One RQ-quantized KV cache feeds two consumers: the **draft** reads only the first `m` RQ stages
-(cheap, needs target agreement), and the **target** reads all `S` stages (needs fidelity).
-Central hypothesis: storing codewords in a lower-precision scalar format and reinvesting the saved
-bits in a larger or higher-dimensional vector codebook beats high-precision codewords at equal
-budget, and the gain carries through to speculative decoding speed. Full plan: `research.md`.
+**SpecRQ — nested weight-VQ self-speculative decoding (direction since 2026-11-05).**
+Goal: raise real generation throughput of a weight-VQ model. The **target** uses all `L` additive
+codebooks; the **draft** uses the first `k` (prefix), optionally with a draft-only low-precision
+(`q`=8/4 bit) copy of those codebooks. Verify on RTX 4090 first; KV compression and serving come later.
+
+- **Source of truth: Notion** https://app.notion.com/p/SpecRQ-40ed62f8ef5b80c3a7c7e51b9190c7a3
+  (01 research questions/criteria, 02 weight design & training, **03 experiment plan = the only live
+  experiment list (E0–E7)**, 04 KV/serving extension, 90 references + old plan).
+- Start config **C1**: d=8, K=256, L=5 (5 bit/weight target), draft k=3 → 2, q=16 → 8/4. C2: d=8, K=4096, L=2.
+- Models: Qwen2.5-0.5B-Instruct (pipeline check) → Llama-3.1-8B-Instruct (main). Training base: Drop-by-Drop-style
+  prefix-aware additive-codebook (AQ) learning, not pure RQ.
+- Success = measured end-to-end confirmed tokens/s vs. **optimized AR of the same VQ target**, under a target-quality
+  constraint. Acceptance alone or modeled speed-up is not success. Speedup ≈ τ·T_AR / (T_draft_round + T_verify + T_overhead).
+- `research.md` and the KV notes below describe the **previous KV-cache GSRQ direction** (kept for KV stage 3).
 
 ## Structure
 
@@ -28,12 +36,16 @@ SpecRQ/
 │   ├── decoding.py      # AR baseline + speculative (greedy / rejection sampling), phase timers
 │   ├── costmodel.py     # memory-traffic modeled speed-up vs (ctx, batch)
 │   └── run.py           # CLI: python -m specdec.run --rep {fp16,int,rq} ...
-└── (planned)
-    ├── specrq/          # formats, codec experiments (E1-E5)
-    ├── experiments/     # one dir per stage: e0_feasibility, e1_format, e2_format_aware, ...
-    ├── results/         # JSON + tables per experiment
-    └── ckpts/           # trained codebooks (see "Paths": location not decided yet)
+├── specrq/              # (old) scalar formats for codeword experiments
+├── results/             # JSON + tables (results/format_rq, results/specdec = old KV direction)
+└── (weight-VQ, planned)
+    ├── experiments/e0_kernel/    # T(M) of FP16 / INT4 Marlin / VQ C1,C2 linear kernels (Notion E0)
+    ├── experiments/e1_qprec/     # q=16/8/4 kernel cost (E1)
+    ├── experiments/e2_qwen_c1/   # Qwen C1 target AR + nested draft + exact greedy verify (E2)
+    └── /data/lsh/ckpts/weightvq/ # quantized weight checkpoints (heavy, local disk)
 ```
+The specdec/ and kvstore code above is from the KV direction; `decoding.py` loop/timers may be reused.
+Git: repo initialized 2026-11-05 (`VQLLM/` is its own upstream clone and is git-ignored).
 
 Keep upstream changes inside `VQLLM/` minimal and deliberate; put new code in `specrq/` and `experiments/`.
 
@@ -60,6 +72,7 @@ under `/hai/home/lsh/SpecRQ`. Heavy outputs (codebook ckpts, wandb, scratch) go 
 | What | Path | Notes |
 |---|---|---|
 | Base models | `/data/models/{llama2_7b, llama3_3b, llama3_8b, mistral_7b}` | local disk (`/data`, 23 TB free) |
+| Weight-VQ models (to download) | `/data/models/{qwen2.5_0.5b_instruct, llama3.1_8b_instruct}` | pin HF revision; record it in results |
 | Llama-3-8B Meta weights | `/data/models/llama3_8b/consolidated.00.pth`, `tokenizer.model` | `original/` holds only `config.json`; HF safetensors shards absent |
 | Llama-3.2-3B | `/data/models/llama3_3b` (HF safetensors + `original/` Meta) | 28 layers, 8 KV heads; **no builder in the current VQLLM clone** |
 | Llama-2-7B / Mistral-7B | HF `.bin` + safetensors | MHA (Llama-2) is the planned primary model |
@@ -72,7 +85,7 @@ Previously trained codebooks (Llama-3.2-3B, `D∈{16,32,128}`) were deleted, so 
 Checkpoint dir naming: `{both|key|value}_quant_Key_K[S]C[C]D[D]_Value_..._SubVec{n}_Stages{n}/meta_model.pt`
 (Meta models) or `hf_model00{1,2}.pt` (HF models). The file contains full model weights plus the quantizer state.
 
-## Spec-decode harness notes
+## Spec-decode harness notes (KV-cache direction, before 2026-11-05)
 
 - **Main setting (since 2026-10-23): quantized target at ≈4 BPA** (RQ `--target full --target-stages <4 bit>`; scalar
   baselines: nested `--target full` and separate copies `--target sep4`). Reason: at long context the KV cache is
@@ -89,7 +102,7 @@ Checkpoint dir naming: `{both|key|value}_quant_Key_K[S]C[C]D[D]_Value_..._SubVec
 - Llama-3-8B max context is 8192, and draft weights equal target weights. At batch 1 the weight traffic dominates,
   so KV-only drafting cannot win there.
 
-## Codebook format (VQLLM checkpoint)
+## Codebook format (VQLLM KV checkpoint, old direction)
 
 - Keys: `layers.{l}.attention.quantizer.{key|value}.{stage}.codebooks.{cb}.weight` → `(C, D)` unit-norm **shape**;
   `...{stage}.gains` → `(NSV, C)` fp16 **gain**. Effective codeword = `gain * shape` (GSRQ).

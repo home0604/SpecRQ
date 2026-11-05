@@ -1,3 +1,5 @@
+> **2026-11-05:** 연구 방향이 nested weight-VQ로 전환됨. 현행 계획은 Notion (CLAUDE.md 링크) 참고. 이 문서는 이전 KV-cache GSRQ 계획이며 KV 확장 단계(Notion 04)에서 재사용.
+
 # Format-Aware Asymmetric Residual Quantization for Self-Speculative Decoding
 
 연구의 중심은 **"저정밀 codeword로 확보한 공간을 vector codebook의 표현력에 재투자한다"**입니다. 이 가설을 self-speculative decoding에서 검증합니다. Acceptance-aware 학습과 비대칭 RQ는 이 가설을 실현하는 설계 요소로 둡니다.
