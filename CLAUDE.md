@@ -123,6 +123,12 @@ Checkpoint dir naming: `{both|key|value}_quant_Key_K[S]C[C]D[D]_Value_..._SubVec
 
 ## Gotchas
 
+- **CUDA extension builds:** default `/usr/bin/g++` is gcc-12 without `cc1plus`. Build with
+  `CC=/usr/bin/gcc-11 CXX=/usr/bin/g++-11 NVCC_PREPEND_FLAGS='-ccbin /usr/bin/g++-11' CUDA_HOME=/usr/local/cuda-12.1
+  TORCH_CUDA_ARCH_LIST=8.9`, `TORCH_EXTENSIONS_DIR=/data/lsh/torch_extensions`, `TRITON_CACHE_DIR=/data/lsh/triton_cache`.
+- **AQLM kernels loop over input rows on the host** (`cuda_kernel.cpp` matmat, `triton_kernel.py`), so their T(M) grows
+  ~linearly in M; they cannot show verify-time amortization (E0, results/E0/e0_full_v1.json).
+
 - **Key layout:** torchtune/Meta `wk` and HF `k_proj` differ by the RoPE row permutation
   (`hf = meta.view(H, hd/2, 2, dim).transpose(1, 2)`). Codebooks are trained on Meta-layout keys, so
   HF keys must be mapped with `x.view(..., H, 2, hd/2).transpose(-1, -2)` before encoding and mapped back after.

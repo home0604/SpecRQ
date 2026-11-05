@@ -1,0 +1,172 @@
+"""E0 kernel wrappers: build random weights for each (kernel, config) and return a callable y = f(x).
+
+Every builder returns a Case with
+  fn(x)       -> y (M, N) fp16, the kernel under test
+  ref(x)      -> y_ref (M, N) fp32 from the dequantized weight (correctness reference)
+  bytes_w     -> bytes the kernel must read for the weight representation (container sizes, incl. codebooks/scales)
+  info        -> dict of config details
+Weights are random (timing only). Shapes are (N_out, K_in).
+
+Sources: AQLM inference_lib @ /data/lsh/src/AQLM (e79a896) loaded from source via sys.path (not pip-installed);
+Marlin @ /data/lsh/src/marlin (1f25790), pip -e into env nestvq.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from dataclasses import dataclass, field
+from typing import Callable
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+AQLM_SRC = "/data/lsh/src/AQLM/inference_lib/src"
+
+# JIT build settings for the AQLM CUDA extension (system g++ (12) has no cc1plus; use g++-11).
+os.environ.setdefault("CUDA_HOME", "/usr/local/cuda-12.1")
+os.environ.setdefault("CC", "/usr/bin/gcc-11")
+os.environ.setdefault("CXX", "/usr/bin/g++-11")
+os.environ.setdefault("NVCC_PREPEND_FLAGS", "-ccbin /usr/bin/g++-11")
+os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "8.9")
+os.environ.setdefault("TORCH_EXTENSIONS_DIR", "/data/lsh/torch_extensions")
+os.environ.setdefault("TRITON_CACHE_DIR", "/data/lsh/triton_cache")
+if "/usr/local/cuda-12.1/bin" not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = "/usr/local/cuda-12.1/bin:" + os.environ.get("PATH", "")
+if AQLM_SRC not in sys.path:
+    sys.path.insert(0, AQLM_SRC)
+
+D = 8  # in_group_size (vector dim) for every VQ config here
+
+# name -> (num_codebooks L, bits per code b)
+VQ_CONFIGS = {
+    "C1": (5, 8),    # 5 codebooks x 8 bit, d=8 -> 5 bpw (nested prefixes k=1..5 -> 1..5 bpw)
+    "C2": (2, 12),   # 2 codebooks x 12 bit, d=8 -> 3 bpw
+    "A1x16": (1, 16),  # AQLM native 2 bpw
+    "A2x8": (2, 8),    # AQLM native 2 bpw == C1 prefix k=2 layout
+    "A1x8": (1, 8),    # AQLM native 1 bpw == C1 prefix k=1 layout
+}
+
+
+@dataclass
+class Case:
+    fn: Callable[[torch.Tensor], torch.Tensor]
+    ref: Callable[[torch.Tensor], torch.Tensor]
+    bytes_w: int
+    info: dict = field(default_factory=dict)
+
+
+class Unsupported(Exception):
+    pass
+
+
+# ----------------------------------------------------------------------------------------------- fp16
+def build_fp16(N, K, dev="cuda"):
+    W = (torch.randn(N, K, device=dev) / K ** 0.5).half()
+    return Case(fn=lambda x: F.linear(x, W), ref=lambda x: x.float() @ W.float().t(),
+                bytes_w=2 * N * K, info={"bpw": 16})
+
+
+# ----------------------------------------------------------------------------------------------- marlin
+def build_marlin(N, K, dev="cuda", groupsize=128):
+    import marlin  # noqa
+    if K % 128 or N % 128:
+        raise Unsupported(f"Marlin needs N%128==0 and K%128==0 for M<=16 (got N={N}, K={K})")
+    W = torch.randn(N, K, device=dev) / K ** 0.5
+    Wg = W.view(N, K // groupsize, groupsize)
+    s = (Wg.abs().amax(-1) / 7).clamp_min(1e-8)  # (N, K/g); symmetric 4-bit as in marlin test.py
+    q = torch.clamp(torch.round(Wg / s[..., None]) + 8, 0, 15)
+    Wdq = ((q - 8) * s[..., None]).view(N, K).half()
+    lin = nn.Linear(K, N, bias=False).to(dev).half()
+    lin.weight.data = Wdq.clone()
+    # marlin.Layer.__init__ insists on N%256; the kernel itself only needs N%thread_n (=128 for M<=16).
+    layer = marlin.Layer.__new__(marlin.Layer)
+    nn.Module.__init__(layer)
+    layer.k, layer.n, layer.groupsize = K, N, groupsize
+    layer.register_buffer("B", torch.empty((K // 16, N * 16 // 8), dtype=torch.int, device=dev))
+    layer.register_buffer("s", torch.empty((K // groupsize, N), dtype=torch.half, device=dev))
+    layer.register_buffer("workspace", torch.zeros(N // 128 * 16, dtype=torch.int, device=dev), persistent=False)
+    layer.pack(lin, s.half())
+    del lin
+    Wref = Wdq.float()
+    return Case(fn=layer.forward, ref=lambda x: x.float() @ Wref.t(),
+                bytes_w=N * K // 2 + 2 * N * (K // groupsize), info={"bpw": 4, "groupsize": groupsize})
+
+
+# ----------------------------------------------------------------------------------------------- AQLM
+def _rand_vq(N, K, L, b, dev):
+    from aqlm.utils import pack_int_data
+    codes_u = torch.randint(0, 2 ** b, (N, K // D, L), device=dev, dtype=torch.int64)
+    codes = pack_int_data(codes_u.clone(), b)  # int8 for b<=8, int16 for b<=16 (AQLM storage)
+    codebooks = (torch.randn(L, 2 ** b, 1, D, device=dev) * (1.0 / (K * L) ** 0.5) * 3).half()
+    scales = (torch.rand(N, 1, 1, 1, device=dev) + 0.5).half()
+    return codes, codebooks, scales
+
+
+def _vq_bytes(N, K, L, b, codes):
+    return codes.numel() * codes.element_size() + L * (2 ** b) * D * 2 + 2 * N
+
+
+def _vq_ref(codes, codebooks, scales):
+    from aqlm.utils import _dequantize_weight, unpack_int_data
+    nbits = codebooks.shape[1].bit_length() - 1
+    W = _dequantize_weight(unpack_int_data(codes, nbits), codebooks.float(), scales.float())
+    return lambda x: x.float() @ W.t()
+
+
+def _cuda_op(L, b, dequant: bool):
+    import aqlm.inference_kernels.cuda_kernel  # noqa: F401  (JIT-builds codebook_cuda, registers ops)
+    suffix = "_dequant" if dequant else ""
+    table = {(1, 16): "code1x16_matmat", (2, 8): "code2x8_matmat", (1, 8): "code1x8_matmat"}
+    if (L, b) not in table:
+        raise Unsupported(f"AQLM CUDA kernels exist only for 1x16, 2x8, 1x8 (CodeKx8 instantiated for K=1,2); "
+                          f"got {L}x{b}")
+    return getattr(torch.ops.aqlm, table[(L, b)] + suffix)
+
+
+def build_aqlm_cuda(N, K, cfg, dev="cuda", dequant=False):
+    L, b = VQ_CONFIGS[cfg]
+    op = _cuda_op(L, b, dequant)
+    codes, cbs, sc = _rand_vq(N, K, L, b, dev)
+    return Case(fn=lambda x: op(x, codes, cbs, sc, None), ref=_vq_ref(codes, cbs, sc),
+                bytes_w=_vq_bytes(N, K, L, b, codes),
+                info={"L": L, "b": b, "d": D, "bpw": L * b / D, "code_dtype": str(codes.dtype),
+                      "path": "AQLM CUDA dequant-kernel + matmul" if dequant else "AQLM CUDA matvec (row loop)"})
+
+
+def build_aqlm_triton(N, K, cfg, dev="cuda"):
+    from aqlm.inference_kernels.triton_kernel import triton_matmul
+    L, b = VQ_CONFIGS[cfg]
+    if L & (L - 1):
+        raise Unsupported(f"AQLM Triton kernel uses tl.arange(0, num_codebooks): needs power-of-2 codebooks, got {L}")
+    codes, cbs, sc = _rand_vq(N, K, L, b, dev)
+    return Case(fn=lambda x: triton_matmul(x, codes, cbs, sc, None), ref=_vq_ref(codes, cbs, sc),
+                bytes_w=_vq_bytes(N, K, L, b, codes),
+                info={"L": L, "b": b, "d": D, "bpw": L * b / D, "code_dtype": str(codes.dtype),
+                      "path": "AQLM Triton gemv (row loop)"})
+
+
+def build_dequant(N, K, cfg, dev="cuda"):
+    from aqlm.inference_kernels.dequantization import dequantize_gemm
+    L, b = VQ_CONFIGS[cfg]
+    codes, cbs, sc = _rand_vq(N, K, L, b, dev)
+    return Case(fn=lambda x: dequantize_gemm(x, codes, cbs, sc, None), ref=_vq_ref(codes, cbs, sc),
+                bytes_w=_vq_bytes(N, K, L, b, codes),
+                info={"L": L, "b": b, "d": D, "bpw": L * b / D, "code_dtype": str(codes.dtype),
+                      "path": "AQLM dequantize_gemm (embedding_bag -> F.linear)"})
+
+
+# kernel name -> (builder, list of configs or [None])
+KERNELS = {
+    "fp16": (build_fp16, [None]),
+    "marlin": (build_marlin, [None]),
+    "aqlm_cuda": (build_aqlm_cuda, ["A1x16", "A2x8", "A1x8", "C1", "C2"]),
+    "aqlm_cuda_dq": (lambda N, K, cfg: build_aqlm_cuda(N, K, cfg, dequant=True), ["A1x16", "A2x8", "A1x8", "C1", "C2"]),
+    "aqlm_triton": (build_aqlm_triton, ["A2x8", "C2", "C1"]),
+    "dequant": (build_dequant, ["C1", "C2"]),
+}
+
+
+def build(kernel, N, K, cfg):
+    fn, _ = KERNELS[kernel]
+    return fn(N, K) if cfg is None else fn(N, K, cfg)

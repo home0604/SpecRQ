@@ -1,0 +1,138 @@
+{
+ "exp": "E0",
+ "run": "layout_prefix_bytes_v1",
+ "time": "2026-11-05T18:30:14",
+ "commit": "37f75d0",
+ "dirty_files": 9,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": null,
+ "model_revision": null,
+ "config": {
+  "setting": "analytic prefix-k DRAM bytes, Llama-3.1-8B layer",
+  "sector_bytes": 32,
+  "d": 8,
+  "cfgs": {
+   "C1": [
+    5,
+    8
+   ],
+   "C2": [
+    2,
+    12
+   ]
+  }
+ },
+ "metrics": {
+  "rows": [
+   {
+    "cfg": "C1",
+    "L": 5,
+    "b": 8,
+    "k": 1,
+    "bpw_prefix": 1.0,
+    "MB_per_layer_interleaved": 136.343552,
+    "MB_per_layer_planar_packed": 27.291648,
+    "MB_per_layer_planar_container": 27.291648,
+    "waste_ratio_interleaved_vs_planar_packed": 4.995797688728801,
+    "wasted_fraction_interleaved": 0.8000420584612611,
+    "fp16_MB_per_layer": 436.207616,
+    "int4g128_MB_per_layer": 112.459776
+   },
+   {
+    "cfg": "C1",
+    "L": 5,
+    "b": 8,
+    "k": 2,
+    "bpw_prefix": 2.0,
+    "MB_per_layer_interleaved": 136.372224,
+    "MB_per_layer_planar_packed": 54.583296,
+    "MB_per_layer_planar_container": 54.583296,
+    "waste_ratio_interleaved_vs_planar_packed": 2.4984241332733004,
+    "wasted_fraction_interleaved": 0.6001681984741996,
+    "fp16_MB_per_layer": 436.207616,
+    "int4g128_MB_per_layer": 112.459776
+   },
+   {
+    "cfg": "C1",
+    "L": 5,
+    "b": 8,
+    "k": 3,
+    "bpw_prefix": 3.0,
+    "MB_per_layer_interleaved": 136.400896,
+    "MB_per_layer_planar_packed": 81.874944,
+    "MB_per_layer_planar_container": 81.874944,
+    "waste_ratio_interleaved_vs_planar_packed": 1.6659662814548002,
+    "wasted_fraction_interleaved": 0.4003783670160055,
+    "fp16_MB_per_layer": 436.207616,
+    "int4g128_MB_per_layer": 112.459776
+   },
+   {
+    "cfg": "C1",
+    "L": 5,
+    "b": 8,
+    "k": 4,
+    "bpw_prefix": 4.0,
+    "MB_per_layer_interleaved": 136.429568,
+    "MB_per_layer_planar_packed": 109.166592,
+    "MB_per_layer_planar_container": 109.166592,
+    "waste_ratio_interleaved_vs_planar_packed": 1.24973735554555,
+    "wasted_fraction_interleaved": 0.20067251110844242,
+    "fp16_MB_per_layer": 436.207616,
+    "int4g128_MB_per_layer": 112.459776
+   },
+   {
+    "cfg": "C1",
+    "L": 5,
+    "b": 8,
+    "k": 5,
+    "bpw_prefix": 5.0,
+    "MB_per_layer_interleaved": 136.45824,
+    "MB_per_layer_planar_packed": 136.45824,
+    "MB_per_layer_planar_container": 136.45824,
+    "waste_ratio_interleaved_vs_planar_packed": 1.0,
+    "wasted_fraction_interleaved": 0.0010505778177998248,
+    "fp16_MB_per_layer": 436.207616,
+    "int4g128_MB_per_layer": 112.459776
+   },
+   {
+    "cfg": "C2",
+    "L": 2,
+    "b": 12,
+    "k": 1,
+    "bpw_prefix": 1.5,
+    "MB_per_layer_interleaved": 109.510656,
+    "MB_per_layer_planar_packed": 41.353216,
+    "MB_per_layer_planar_container": 54.984704,
+    "waste_ratio_interleaved_vs_planar_packed": 2.6481774960380347,
+    "wasted_fraction_interleaved": 0.6265709156193896,
+    "fp16_MB_per_layer": 436.207616,
+    "int4g128_MB_per_layer": 112.459776
+   },
+   {
+    "cfg": "C2",
+    "L": 2,
+    "b": 12,
+    "k": 2,
+    "bpw_prefix": 3.0,
+    "MB_per_layer_interleaved": 109.969408,
+    "MB_per_layer_planar_packed": 82.706432,
+    "MB_per_layer_planar_container": 109.969408,
+    "waste_ratio_interleaved_vs_planar_packed": 1.329635499207607,
+    "wasted_fraction_interleaved": 0.2562574493444577,
+    "fp16_MB_per_layer": 436.207616,
+    "int4g128_MB_per_layer": 112.459776
+   }
+  ]
+ },
+ "notes": ""
+}
