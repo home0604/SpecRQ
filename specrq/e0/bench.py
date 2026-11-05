@@ -137,11 +137,12 @@ def main(argv=None):
     ap.add_argument("--models", nargs="+", default=["qwen", "llama"])
     ap.add_argument("--layers", nargs="+", default=None, help="subset of layer names")
     ap.add_argument("--ms", nargs="+", type=int, default=[1, 2, 3, 4, 5, 8, 16])
-    ap.add_argument("--kernels", nargs="+", default=[k for k in K.KERNELS if k != "nest_gemv"])
+    ap.add_argument("--kernels", nargs="+", default=[k for k in K.KERNELS if not k.startswith("nest_")])
     ap.add_argument("--cfgs", nargs="+", default=None, help="restrict configs (e.g. A1x8 A2x8 C1k1)")
     ap.add_argument("--mode", default="flush", choices=["flush", "warm", "graph", "graph_flush"])
     ap.add_argument("--graph-iters", type=int, default=20)
     ap.add_argument("--flush-kind", default="write", choices=["write", "read"])
+    ap.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
     ap.add_argument("--iters", type=int, default=100)
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--no-save", action="store_true")
@@ -149,6 +150,7 @@ def main(argv=None):
 
     torch.manual_seed(0)
     dev = "cuda"
+    K.DTYPE = {"fp16": torch.float16, "bf16": torch.bfloat16}[a.dtype]
     flush = Flusher(torch.zeros(FLUSH_BYTES // 4, dtype=torch.int32, device=dev), a.flush_kind)
     rows, unsupported, errors = [], [], []
     t0 = time.time()
@@ -177,7 +179,7 @@ def main(argv=None):
                             unsupported.append({"model": model, "layer": lname, "kernel": kern, "cfg": cfg, "M": M,
                                                 "reason": f"kernel supports M<={case.max_m}"})
                             continue
-                        x = torch.randn(M, Kin, device=dev).half()
+                        x = torch.randn(M, Kin, device=dev).to(K.DTYPE)
                         try:
                             y = case.fn(x)
                             yr = case.ref(x)
@@ -190,7 +192,7 @@ def main(argv=None):
                             break
                         act = 2 * M * Kin + 2 * M * N
                         rows.append({"model": model, "layer": lname, "N": N, "K": Kin, "M": M, "kernel": kern,
-                                     "cfg": cfg, "mode": a.mode, "flush_kind": a.flush_kind, "t_us": med, "t_us_min": lo, "t_us_max": hi, "rel_err": rel,
+                                     "cfg": cfg, "mode": a.mode, "flush_kind": a.flush_kind, "dtype": a.dtype, "t_us": med, "t_us_min": lo, "t_us_max": hi, "rel_err": rel,
                                      "bytes_w": case.bytes_w, "gbps": (case.bytes_w + act) / (med * 1e-6) / 1e9,
                                      **{k: v for k, v in case.info.items() if k in ("bpw", "code_dtype", "path", "k")}})
                         print(f"[{a.mode}/{a.flush_kind}] {tag} M={M:2d} t={med:9.2f}us [{lo:.2f},{hi:.2f}] "
@@ -214,9 +216,9 @@ def main(argv=None):
         from tools.results import save_result
         p = save_result("E0", a.run,
                         config={"setting": "weight-only GEMV/GEMM microbench, random weights", "models": a.models,
-                                "ms": a.ms, "kernels": a.kernels, "cfgs": a.cfgs, "mode": a.mode, "flush_kind": a.flush_kind,
+                                "ms": a.ms, "kernels": a.kernels, "cfgs": a.cfgs, "mode": a.mode, "flush_kind": a.flush_kind, "dtype": a.dtype,
                                 "iters": a.iters, "rounds": a.rounds, "graph_iters": a.graph_iters,
-                                "flush_bytes": FLUSH_BYTES, "dtype": "fp16", "vq_configs": K.VQ_CONFIGS,
+                                "flush_bytes": FLUSH_BYTES, "vq_configs": K.VQ_CONFIGS,
                                 "aqlm_src": "/data/lsh/src/AQLM@e79a896", "marlin_src": "/data/lsh/src/marlin@1f25790"},
                         metrics={"rows": rows, "unsupported": unsupported, "errors": errors, "wall_s": wall})
         print("saved", p)

@@ -36,6 +36,7 @@ if "/usr/local/cuda-12.1/bin" not in os.environ.get("PATH", ""):
 if AQLM_SRC not in sys.path:
     sys.path.insert(0, AQLM_SRC)
 
+DTYPE = torch.float16  # activation/weight dtype for the run; bench --dtype sets it. Marlin/AQLM need fp16.
 D = 8  # in_group_size (vector dim) for every VQ config here
 
 # name -> (num_codebooks L, bits per code b)
@@ -63,13 +64,20 @@ class Unsupported(Exception):
 
 # ----------------------------------------------------------------------------------------------- fp16
 def build_fp16(N, K, dev="cuda"):
-    W = (torch.randn(N, K, device=dev) / K ** 0.5).half()
+    """Dense cuBLAS baseline in DTYPE (name kept as 'fp16' for continuity; rows carry 'dtype')."""
+    W = (torch.randn(N, K, device=dev) / K ** 0.5).to(DTYPE)
     return Case(fn=lambda x: F.linear(x, W), ref=lambda x: x.float() @ W.float().t(),
                 bytes_w=2 * N * K, info={"bpw": 16})
 
 
 # ----------------------------------------------------------------------------------------------- marlin
+def _need_fp16(name):
+    if DTYPE != torch.float16:
+        raise Unsupported(f"{name} supports fp16 only (run dtype {DTYPE})")
+
+
 def build_marlin(N, K, dev="cuda", groupsize=128):
+    _need_fp16("Marlin")
     import marlin  # noqa
     if K % 128 or N % 128:
         raise Unsupported(f"Marlin needs N%128==0 and K%128==0 for M<=16 (got N={N}, K={K})")
@@ -126,6 +134,7 @@ def _cuda_op(L, b, dequant: bool):
 
 
 def build_aqlm_cuda(N, K, cfg, dev="cuda", dequant=False):
+    _need_fp16("AQLM CUDA (as benchmarked)")
     L, b = VQ_CONFIGS[cfg]
     op = _cuda_op(L, b, dequant)
     codes, cbs, sc = _rand_vq(N, K, L, b, dev)
@@ -136,6 +145,7 @@ def build_aqlm_cuda(N, K, cfg, dev="cuda", dequant=False):
 
 
 def build_aqlm_triton(N, K, cfg, dev="cuda"):
+    _need_fp16("AQLM Triton (as benchmarked)")
     from aqlm.inference_kernels.triton_kernel import triton_matmul
     L, b = VQ_CONFIGS[cfg]
     if L & (L - 1):
@@ -148,6 +158,7 @@ def build_aqlm_triton(N, K, cfg, dev="cuda"):
 
 
 def build_dequant(N, K, cfg, dev="cuda"):
+    _need_fp16("AQLM dequantize_gemm (as benchmarked)")
     from aqlm.inference_kernels.dequantization import dequantize_gemm
     L, b = VQ_CONFIGS[cfg]
     codes, cbs, sc = _rand_vq(N, K, L, b, dev)
@@ -172,14 +183,34 @@ def build_nest_gemv(N, K, cfg, dev="cuda"):
     if K % 32:
         raise Unsupported(f"nest_gemv needs K%32==0 (got {K})")
     codes = torch.randint(0, 256, (L, N, K // D), device=dev, dtype=torch.uint8)
-    cbs = (torch.randn(L, 256, D, device=dev) * (3.0 / (K * L) ** 0.5)).half()
-    sc = (torch.rand(N, device=dev) + 0.5).half()
+    cbs = (torch.randn(L, 256, D, device=dev) * (3.0 / (K * L) ** 0.5)).to(DTYPE)
+    sc = (torch.rand(N, device=dev) + 0.5).to(DTYPE)
     p = PlanarVQ(codes, cbs, sc, N, K)
     kc = kernel_codes(codes)
     return Case(fn=lambda x: nest_gemv(x, kc, cbs, sc, k, repl, variant), ref=lambda x: ref_matmul(x, p, k), bytes_w=p.nbytes(k),
                 info={"L": L, "b": b, "d": D, "k": k, "bpw": k * b / D, "code_dtype": "uint8 planar",
                       "path": "nestkern planar GEMV (a), M=1", "repl": repl,
                       "variant": "generic" if variant == 1 or repl or K > 4096 else "xreg"}, max_m=1)
+
+
+def build_nest_mma(N, K, cfg, dev="cuda"):
+    """Our tensor-core nested-VQ GEMM (path (a) + mma.m16n8k16), 1 <= M <= 16. cfg 'C1k<k>[s<splits>][c<cfg>]'."""
+    from specrq.nestkern.ops import nest_mma
+    from specrq.nestkern.pack import PlanarVQ, mma_codes, ref_matmul
+    L, b = VQ_CONFIGS["C1"]
+    body, _, tc = cfg[3:].partition("c")
+    k, _, sp = body.partition("s")
+    k, sp, tc = int(k), int(sp or 0), int(tc or 0)
+    if K % 64 or N % 16:
+        raise Unsupported(f"nest_mma needs K%64==0, N%16==0 (got N={N}, K={K})")
+    codes = torch.randint(0, 256, (L, N, K // D), device=dev, dtype=torch.uint8)
+    cbs = (torch.randn(L, 256, D, device=dev) * (3.0 / (K * L) ** 0.5)).to(DTYPE)
+    sc = (torch.rand(N, device=dev) + 0.5).to(DTYPE)
+    p = PlanarVQ(codes, cbs, sc, N, K)
+    mc = mma_codes(codes)
+    return Case(fn=lambda x: nest_mma(x, mc, cbs, sc, k, sp, tc), ref=lambda x: ref_matmul(x, p, k), bytes_w=p.nbytes(k),
+                info={"L": L, "b": b, "d": D, "k": k, "bpw": k * b / D, "code_dtype": "uint8 mma_tile_v1",
+                      "path": "nestkern planar mma (a), M<=16", "splits": sp, "tile_cfg": tc}, max_m=16)
 
 
 # kernel name -> (builder, list of configs or [None])
@@ -192,6 +223,7 @@ KERNELS = {
     "dequant": (build_dequant, ["C1", "C2"]),
     "nest_gemv": (build_nest_gemv, ["C1k1", "C1k2", "C1k3", "C1k4", "C1k5",
                                     "C1k1g", "C1k2g", "C1k5g", "C1k3r4", "C1k5r2"]),
+    "nest_mma": (build_nest_mma, ["C1k1", "C1k2", "C1k3", "C1k4", "C1k5"]),
 }
 
 

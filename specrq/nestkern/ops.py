@@ -34,3 +34,56 @@ def nest_gemv(x: torch.Tensor, kcodes: torch.Tensor, codebooks: torch.Tensor, sc
     kcodes: lane-permuted planar codes from pack.kernel_codes. repl: codebook smem replication (0 = auto).
     variant: 0 auto (register-resident x when K <= 4096 and repl auto), 1 generic loop, 2 force register-x."""
     return ext().nest_gemv(x.contiguous(), kcodes, codebooks, scales, int(k), int(repl), int(variant))
+
+
+_ext_mma = None
+_counters = {}
+
+
+def ext_mma():
+    global _ext_mma
+    if _ext_mma is None:
+        _ext_mma = load(name="nestkern_mma", sources=[str(_CSRC / "nest_mma.cu")],
+                        extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17"], verbose=False)
+    return _ext_mma
+
+
+_ws = {}
+
+
+def _cnt(device) -> torch.Tensor:
+    c = _counters.get(device)
+    if c is None:
+        c = _counters[device] = torch.zeros(1 << 16, dtype=torch.int32, device=device)  # self-resetting
+    return c
+
+
+def _wsp(device, numel) -> torch.Tensor:
+    """Persistent zeroed fp32 split-K workspace (the kernel re-zeroes what it uses)."""
+    w = _ws.get(device)
+    if w is None or w.numel() < numel:
+        w = _ws[device] = torch.zeros(max(numel, 16 * 32768), dtype=torch.float32, device=device)
+    return w
+
+
+def nest_mma(x: torch.Tensor, mcodes: torch.Tensor, codebooks: torch.Tensor, scales: torch.Tensor, k: int,
+             splits: int = 0, cfg: int = 0):
+    """y [M, N] = x [M, K] @ W_k^T for 1 <= M <= 16 (tensor-core path). mcodes from pack.mma_codes.
+    splits: split-K factor (0 = auto). cfg: tile config id (0 = auto, see csrc/nest_mma.cu)."""
+    N = scales.numel()
+    return ext_mma().nest_mma(x.contiguous(), mcodes, codebooks, scales, _cnt(x.device), _wsp(x.device, x.shape[0] * N),
+                              N, int(k), int(splits), int(cfg))
+
+
+_ext_fwht = None
+
+
+def block_fwht_signed(x: torch.Tensor, signs: torch.Tensor, block_size: int) -> torch.Tensor:
+    """x' = BlockFWHT(x * signs) / sqrt(B) along the last dim (== specrq.dbd.src.hadamard.rotate_input)."""
+    global _ext_fwht
+    if _ext_fwht is None:
+        _ext_fwht = load(name="nestkern_fwht", sources=[str(_CSRC / "fwht.cu")],
+                         extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17"], verbose=False)
+    shp = x.shape
+    return _ext_fwht.block_fwht_signed(x.reshape(-1, shp[-1]).contiguous(), signs.float().contiguous(),
+                                       int(block_size)).reshape(shp)

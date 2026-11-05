@@ -81,6 +81,15 @@ def kernel_codes(codes: torch.Tensor) -> torch.Tensor:
     return codes[..., lane_perm(codes.shape[-1]).to(codes.device)].contiguous()
 
 
+def mma_codes(codes: torch.Tensor) -> torch.Tensor:
+    """Logical planar codes [L, N, G] -> "mma_tile_v1" bytes [L, N*G] for nest_mma (see csrc/nest_mma.cu header).
+    Byte (tile, ks, g, s, j) = code of row tile*16 + g + 8*(j>>1), group ks*8 + 2*s + (j&1). Needs N%16, G%8."""
+    L, N, G = codes.shape
+    assert N % 16 == 0 and G % 8 == 0, (N, G)
+    c = codes.reshape(L, N // 16, 2, 8, G // 8, 4, 2)  # (L, tile, hi, g, ks, s, lo)
+    return c.permute(0, 1, 4, 3, 5, 2, 6).reshape(L, N * G).contiguous()
+
+
 def unpack_planar(p: PlanarVQ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Back to AQLM/DbD layout (codes int32)."""
     return (p.codes.permute(1, 2, 0).to(torch.int32).contiguous(), p.codebooks[:, :, None, :].contiguous(),
