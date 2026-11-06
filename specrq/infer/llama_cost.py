@@ -74,6 +74,8 @@ def main(argv=None):
     ap.add_argument("--freq-dir", default=None)
     ap.add_argument("--run", default=None)
     a = ap.parse_args(argv)
+    from specrq.nestkern.gpucheck import cotenants, require_alone
+    cotenant_start = require_alone()
     t0 = time.time()
     rss0 = rss_gb()
     m = NestModel.synthetic(a.model)
@@ -182,7 +184,7 @@ def main(argv=None):
     if a.run:
         sys.path.insert(0, str(REPO))
         from tools.results import save_result
-        print("saved", save_result("E4", a.run, config={
+        print("saved", save_result("E4", a.run, config={"co_tenant_start": cotenant_start, "co_tenant_end": cotenants() or "none",
             "setting": "SYNTHETIC checkpoint: real Llama-3.1-8B-Instruct embed/norm/lm_head, random C1 linears "
                        "(L=5, 8 bit, d=8) + random Hadamard signs (B=256); timing only, no quality",
             "model": a.model, "prompts": a.prompts, "n_new": a.n_new, "gammas": a.gammas, "kds": a.kds,

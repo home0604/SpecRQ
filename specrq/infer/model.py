@@ -152,6 +152,75 @@ def fused(name, use_compile):
     return _COMPILED[name]
 
 
+class GenLinear:
+    """General nested-VQ linear on the nestg kernels: group dim d in {8,16}, per-plane code bits (4/8/12/16, 8/12 may
+    be mixed), L <= 10, codebook values q in {16 (bf16), 8 (int8 + scale), 4 (int4 + scale)}. Same call interface as
+    NestLinear. Dispatch: M == 1 -> nestg GEMV (M1_PATH = "gemv") or MMA ("mma"); M <= 16 -> nestg MMA; larger M in
+    chunks of 16. Built synthetic (random codes/codebooks/scales/signs) for timing."""
+    M1_PATH = "auto"  # "gemv" | "mma" | "auto": time both once per prefix k (outside graph capture) and keep the faster
+    SMEM_MAX = 96 * 1024
+
+    def __init__(self, gv, signs=None, hb=1, bias=None):
+        self.g, self.N, self.K, self.L = gv, gv.N, gv.K, gv.L
+        self.signs, self.hb, self.bias, self.draft = signs, hb, bias, {}
+        self.m1 = {}  # k -> chosen M=1 path
+
+    def _m1_path(self, x, k):
+        if self.M1_PATH != "auto":
+            return self.M1_PATH
+        if k not in self.m1:
+            if torch.cuda.is_current_stream_capturing():
+                return "gemv"
+            ts = {}
+            for path in ("gemv", "mma"):
+                f = (lambda: self.g.gemv(x, k)) if path == "gemv" else (lambda: self.g.mma(x, k))
+                for _ in range(3):
+                    f()
+                s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+                s.record()
+                for _ in range(20):
+                    f()
+                e.record()
+                torch.cuda.synchronize()
+                ts[path] = s.elapsed_time(e)
+            self.m1[k] = min(ts, key=ts.get)
+        return self.m1[k]
+
+    @classmethod
+    def synthetic(cls, N, K, device, dtype, d, bits, q, hadamard_block=256, bias=False, gen=None):
+        from specrq.nestkern.ops import GenVQ
+        L = len(bits)
+        codes = torch.stack([torch.randint(0, 2 ** b, (N, K // d), device=device, generator=gen, dtype=torch.int32)
+                             for b in bits])
+        cbs = [torch.randn(2 ** b, d, device=device, generator=gen) * (3.0 / (K * L) ** 0.5) for b in bits]
+        gv = GenVQ(codes, cbs, torch.rand(N, device=device, generator=gen) + 0.5, list(bits), d, q, smem_max=cls.SMEM_MAX)
+        gv.cb_deq = None  # reference values not needed for timing
+        del codes
+        hb = hadamard_block if (hadamard_block > 1 and K % hadamard_block == 0) else 1
+        signs = (torch.randint(0, 2, (K,), device=device, generator=gen).float() * 2 - 1) if hb > 1 else None
+        b = (torch.randn(N, device=device, generator=gen) * 0.01).to(dtype) if bias else None
+        return cls(gv, signs, hb, b)
+
+    def __call__(self, x, k, use_draft=False, rotated=False):
+        if self.signs is not None and not rotated:
+            x = block_fwht_signed(x, self.signs, self.hb)
+        M = x.shape[0]
+        if M == 1 and self._m1_path(x, k) == "gemv":
+            y = self.g.gemv(x, k)[0]
+        elif M <= 16:
+            y = self.g.mma(x, k)[0]
+        else:
+            y = torch.cat([self.g.mma(x[i:i + 16], k)[0] for i in range(0, M, 16)])
+        return y if self.bias is None else y + self.bias
+
+    def nbytes(self, k):
+        return self.g.nbytes(k)
+
+    def plan(self, path, k, M=1):
+        x = torch.zeros(M, self.K, device=self.g.dev, dtype=torch.bfloat16)
+        return (self.g.gemv(x, k, dry_run=True) if path == "gemv" else self.g.mma(x, k, dry_run=True))[1]
+
+
 class MarlinLinear:
     """Random Marlin FP16 x INT4 (g128) linear for timing baselines (fp16 only, no Hadamard). Random int32 words are
     valid packed int4 weights in Marlin layout, so no packing is needed."""
@@ -226,9 +295,11 @@ class NestModel:
 
     @classmethod
     def synthetic(cls, model_path, device="cuda", dtype=torch.bfloat16, L=5, hadamard=True, seed=0, verbose=True,
-                  linear_impl="nest"):
+                  linear_impl="nest", vq=None):
         """Real embed / norms / lm_head from the HF safetensors of `model_path` (only those tensors are read) and
-        random C1 linears (codes, codebooks, scales, Hadamard signs) generated on the GPU. For timing only."""
+        random C1 linears (codes, codebooks, scales, Hadamard signs) generated on the GPU. For timing only.
+        vq = {"d": 8|16, "bits": int or per-plane list, "q": 16|8|4} selects the general nestg linears (GenLinear)
+        instead of the specialized C1 kernels (linear_impl="nest") or Marlin INT4 (linear_impl="marlin")."""
         import json as _json
         from safetensors import safe_open
         from transformers import AutoConfig
@@ -259,16 +330,23 @@ class NestModel:
             for n, (N, K) in shapes.items():
                 if linear_impl == "marlin":
                     d[n] = MarlinLinear(N, K, self.device, gen=gen)
+                elif vq is not None:
+                    bits = vq["bits"] if isinstance(vq["bits"], (list, tuple)) else [vq["bits"]] * vq["L"]
+                    d[n] = GenLinear.synthetic(N, K, self.device, dtype, vq["d"], bits, vq["q"],
+                                               256 if hadamard else 1, bias=bias and n in ("q_proj", "k_proj", "v_proj"),
+                                               gen=gen)
                 else:
                     d[n] = NestLinear.synthetic(N, K, self.device, dtype, L, 256 if hadamard else 1,
                                                 bias=bias and n in ("q_proj", "k_proj", "v_proj"), gen=gen)
             self.layers.append(d)
             if verbose and i % 8 == 0:
                 print(f"[infer] synthetic layer {i}/{self.n_layers}", flush=True)
-        self.L = L if linear_impl == "nest" else 1
+        self.L = (self.layers[0]["q_proj"].L if vq is not None else L) if linear_impl == "nest" else 1
         self.inv_freq, self.rope_scaling = _rope_inv_freq(cfg, self.device)
         self.use_compile, self.decode_attn, self._rope_len, self.fused_glue = True, "fp32", 0, True
-        self.ckpt_dir = (f"synthetic:C1 L={L} hadamard={hadamard} seed={seed}" if linear_impl == "nest"
+        self.vq = vq
+        self.ckpt_dir = (f"synthetic:nestg {vq} hadamard={hadamard} seed={seed}" if vq is not None else
+                         f"synthetic:C1 L={L} hadamard={hadamard} seed={seed}" if linear_impl == "nest"
                          else f"synthetic:Marlin INT4 g128 seed={seed}")
         self.model_path = model_path
         return self

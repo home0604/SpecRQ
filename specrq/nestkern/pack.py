@@ -108,3 +108,90 @@ def ref_dequant(p: PlanarVQ, k: int, compute_dtype=torch.float32) -> torch.Tenso
 
 def ref_matmul(x: torch.Tensor, p: PlanarVQ, k: int) -> torch.Tensor:
     return x.float() @ ref_dequant(p, k).t()
+
+
+# ------------------------------------------------------------------------------------------------ general (nestg)
+def _nib_pack(v: torch.Tensor) -> torch.Tensor:
+    """[..., 2n] values < 16 -> [..., n] bytes (element 2i in the low nibble)."""
+    v = v.to(torch.uint8)
+    return (v[..., 0::2] | (v[..., 1::2] << 4)).contiguous()
+
+
+def _mma_order(codes: torch.Tensor, d: int) -> torch.Tensor:
+    """Logical [L, N, G] -> [L, N*G] in nestg mma order: (tile, ks, g, t, j) with n = 4 (d=8) or 2 (d=16) per lane."""
+    L, N, G = codes.shape
+    if d == 8:
+        return mma_codes(codes)  # (tile, ks, g, t, hi, lo): j = hi*2 + lo
+    c = codes.reshape(L, N // 16, 2, 8, G // 4, 4)  # (L, tile, hi, g, ks, t)
+    return c.permute(0, 1, 4, 3, 5, 2).reshape(L, N * G).contiguous()
+
+
+def split_planes(c: torch.Tensor, b: int):
+    """codes (any int dtype, values < 2^b) -> (byte, nibble values, byte1) sub-plane values (None when unused)."""
+    c = c.to(torch.int64)
+    p0 = (c & 0xFF).to(torch.uint8) if b >= 8 else None
+    pn = ((c >> 8) & 0xF) if b == 12 else ((c & 0xF) if b == 4 else None)
+    p1 = ((c >> 8) & 0xFF).to(torch.uint8) if b == 16 else None
+    return p0, pn, p1
+
+
+def kernel_bits(bits) -> int:
+    """nestg B template for per-plane bit widths: uniform b -> b; a mix of 8 and 12 -> 12 (8-bit planes have no
+    nibble sub-plane)."""
+    s = set(bits)
+    if len(s) == 1:
+        return bits[0]
+    if s == {8, 12}:
+        return 12
+    raise ValueError(f"unsupported per-plane bit mix {bits}")
+
+
+def pack_general(codes: torch.Tensor, bits, d: int) -> dict:
+    """Logical codes [L, N, G] (G = K/d; plane l values < 2^bits[l]) -> nestg sub-planes for both paths
+    (see csrc/nestg.cu header). bits: int or per-plane list. Nibble sub-planes are stacked only for planes that
+    have one; `nib` maps plane -> nibble sub-plane index (-1: none)."""
+    L, N, G = codes.shape
+    bits = [bits] * L if isinstance(bits, int) else list(bits)
+    B = kernel_bits(bits)
+    nib = [i for i, b in enumerate(bits) if b in (4, 12)]
+    out = {"nib": [nib.index(l) if l in nib else -1 for l in range(L)], "B": B, "bits": bits}
+    for path, ordered in (("gemv", codes[..., lane_perm(G).to(codes.device)]), ("mma", _mma_order(codes, d))):
+        flat = ordered.reshape(L, -1).to(torch.int64)
+        p0 = (flat & 0xFF).to(torch.uint8).contiguous() if B >= 8 else None
+        pn = None
+        if nib:
+            nv = torch.stack([((flat[l] >> 8) & 0xF) if bits[l] == 12 else (flat[l] & 0xF) for l in nib])
+            pn = _nib_pack(nv)
+        p1 = ((flat >> 8) & 0xFF).to(torch.uint8).contiguous() if B == 16 else None
+        out[path] = {"p0": p0, "pn": pn, "p1": p1}
+    return out
+
+
+def quantize_codebook_list(cbs, q: int):
+    """List of per-plane float codebooks [C_l, d] (C_l may differ) -> (bytes uint8 [sum], scales fp32 [L],
+    dequantized list, byte offsets long [L+1] on CPU)."""
+    raws, scs, deqs, off = [], [], [], [0]
+    for cb in cbs:
+        r, s, dq = quantize_codebooks(cb[None], q)
+        raws.append(r)
+        scs.append(s)
+        deqs.append(dq[0])
+        off.append(off[-1] + r.numel())
+    return torch.cat(raws), torch.cat(scs), deqs, torch.tensor(off, dtype=torch.long)
+
+
+def quantize_codebooks(cb: torch.Tensor, q: int):
+    """cb float [L, C, d] -> (raw bytes uint8 [L * C * d * q/8], per-plane scale fp32 [L], dequantized fp32 [L, C, d]).
+    q=16: bf16 values (scale 1); q=8: symmetric int8, scale = max|v|/127 per plane; q=4: int4 [-8, 7], max|v|/7."""
+    L, C, d = cb.shape
+    if q == 16:
+        v = cb.to(torch.bfloat16)
+        return v.contiguous().view(torch.uint8).reshape(-1), torch.ones(L, device=cb.device), v.float()
+    qmax = 127 if q == 8 else 7
+    s = (cb.abs().amax(dim=(1, 2)) / qmax).clamp_min(1e-12).float()
+    iv = torch.round(cb / s[:, None, None]).clamp(-qmax - (1 if q == 4 else 0), qmax).to(torch.int8)
+    deq = iv.float() * s[:, None, None]
+    if q == 8:
+        return iv.contiguous().view(torch.uint8).reshape(-1), s, deq
+    u = (iv.to(torch.int16) & 0xF).to(torch.uint8)  # two's complement nibbles
+    return _nib_pack(u).reshape(-1), s, deq

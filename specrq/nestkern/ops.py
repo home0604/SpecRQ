@@ -123,3 +123,71 @@ def nest_gemv_m(x: torch.Tensor, kcodes: torch.Tensor, codebooks: torch.Tensor, 
         _ext_gemv_m = load(name="nestkern_gemv_m", sources=[str(_CSRC / "nest_gemv_m.cu")],
                            extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17"], verbose=False)
     return _ext_gemv_m.nest_gemv_m(x.contiguous(), kcodes, codebooks, scales, int(k))
+
+
+# ------------------------------------------------------------------------------------------------ nestg (general)
+_ext_g = None
+SMEM_MAX_DEFAULT = 96 * 1024
+
+
+def ext_g():
+    global _ext_g
+    if _ext_g is None:
+        _ext_g = load(name="nestkern_g", sources=[str(_CSRC / "nestg.cu")],
+                      extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17"], verbose=False)
+    return _ext_g
+
+
+_EMPTY = {}
+
+
+def _e(t, dev):
+    if t is not None:
+        return t
+    if dev not in _EMPTY:
+        _EMPTY[dev] = torch.empty(0, dtype=torch.uint8, device=dev)
+    return _EMPTY[dev]
+
+
+class GenVQ:
+    """Packed general nested-VQ weight for nestg kernels (d, b, L, q). Built from logical codes [L, N, K/d],
+    float codebooks [L, 2^b, d] and row scales [N] (bf16). PLAN fields: smem_need, use_smem, smem_launch,
+    blocks_per_sm, grid_x, grid_y."""
+    PLAN = ("smem_need", "use_smem", "smem_launch", "blocks_per_sm", "grid_x", "grid_y", "R")
+
+    def __init__(self, codes, codebooks, scales, b, d, q, smem_max=SMEM_MAX_DEFAULT):
+        """codes [L, N, K/d] (plane l values < 2^bits[l]); codebooks: float [L, 2^b, d] or a list of per-plane
+        [2^bits[l], d]; b: int or per-plane list (8/12 may be mixed)."""
+        from specrq.nestkern.pack import pack_general, quantize_codebook_list
+        self.L, self.N, G = codes.shape
+        self.bits = [b] * self.L if isinstance(b, int) else list(b)
+        self.K, self.d, self.q, self.smem_max = G * d, d, q, smem_max
+        self.planes = pack_general(codes, self.bits, d)
+        self.b = self.planes["B"]
+        cbl = [codebooks[l] for l in range(self.L)] if torch.is_tensor(codebooks) else list(codebooks)
+        self.cb, self.cbs, self.cb_deq, self.cb_off = quantize_codebook_list([c.float() for c in cbl], q)
+        self.nib = torch.tensor(self.planes["nib"], dtype=torch.long)
+        self.scales = scales.to(torch.bfloat16).contiguous()
+        self.dev = codes.device
+
+    def _args(self, path):
+        p = self.planes[path]
+        return [_e(p["p0"], self.dev), _e(p["pn"], self.dev), _e(p["p1"], self.dev), self.cb, self.cbs.contiguous(),
+                self.scales]
+
+    def _meta(self):
+        return [self.cb_off, self.nib]
+
+    def gemv(self, x, k, dry_run=False):
+        y, plan = ext_g().nestg_gemv(x.contiguous(), *self._args("gemv"), *self._meta(), self.N, self.d, self.b, self.q,
+                                     self.L, int(k), self.smem_max, dry_run)
+        return y, dict(zip(self.PLAN, plan.tolist()))
+
+    def mma(self, x, k, splits=0, dry_run=False):
+        y, plan = ext_g().nestg_mma(x.contiguous(), *self._args("mma"), _cnt(x.device), *self._meta(), self.N, self.d,
+                                    self.b, self.q, self.L, int(k), self.smem_max, int(splits), dry_run)
+        return y, dict(zip(self.PLAN, plan.tolist()))
+
+    def nbytes(self, k):
+        """Bytes read by a prefix-k pass: k code planes (k * N * K/d * b/8) + k codebook planes + row scales."""
+        return (sum(self.bits[:k]) * self.N * (self.K // self.d)) // 8 + int(self.cb_off[k]) + 2 * self.N
