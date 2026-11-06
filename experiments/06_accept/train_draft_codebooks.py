@@ -18,6 +18,20 @@ from src.modelutils import get_model
 from src.aq import QuantizedLinear
 
 
+def shrink_codes_(model):
+    """[specrq] store codes as uint8 when every stage has <= 256 entries (codes are cast to int32 per forward by
+    QuantizedWeight.get_codes, so outputs are unchanged); needed to fit Llama-8B C1 (int32 codes ~17 GB) on one GPU."""
+    import torch.nn as nn
+    n = 0
+    for m in model.modules():
+        if isinstance(m, QuantizedLinear):
+            qw = m.quantized_weight
+            if qw.codes is not None and qw.codes.dtype != torch.uint8 and int(qw.codes.max()) < 256 and int(qw.codes.min()) >= 0:
+                qw.codes = nn.Parameter(qw.codes.data.to(torch.uint8), requires_grad=False)
+                n += 1
+    return n
+
+
 def set_k(model, k):
     for m in model.modules():
         if isinstance(m, QuantizedLinear):
@@ -45,11 +59,24 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--no_train_scales", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--codes_uint8", action="store_true", help="store 8-bit codes as uint8 (memory; outputs unchanged)")
+    ap.add_argument("--micro_batch", type=int, default=0, help="split each batch into micro-batches of this size "
+                    "(gradient accumulation, same update); 0 = no split")
+    ap.add_argument("--checkpoint_linears", action="store_true",
+                    help="recompute each QuantizedLinear forward in backward (QuantizedLinear.use_checkpoint) so dequantized "
+                         "weights are not kept for all layers (Llama-8B OOM otherwise); gradients unchanged")
     a = ap.parse_args()
     torch.manual_seed(a.seed)
     os.makedirs(a.out, exist_ok=True)
     dev = torch.device("cuda:0")
-    model = get_model(a.model, a.ckpt, "auto").to(dev)
+    model = get_model(a.model, a.ckpt, "auto")
+    if a.codes_uint8:
+        print("codes -> uint8 for", shrink_codes_(model), "linears")
+    model = model.to(dev)
+    if a.checkpoint_linears:
+        for m in model.modules():
+            if isinstance(m, QuantizedLinear):
+                m.use_checkpoint = True
     for p in model.parameters():
         p.requires_grad_(False)
     n_train = attach_draft_codebooks(model, a.kd, train_scales=not a.no_train_scales)
@@ -72,6 +99,34 @@ def main():
             refresh_fakequant(model)
         idx = torch.randint(0, data.shape[0], (a.batch,))
         ids = data[idx].to(dev)
+        if a.micro_batch and a.micro_batch < a.batch:
+            # [specrq] same sampled batch, split into equal micro-batches; grads accumulated with weight 1/n_micro so the
+            # update equals the full-batch mean-loss gradient (memory: Llama-8B 128k-vocab logits in fp32)
+            assert a.batch % a.micro_batch == 0
+            n_micro = a.batch // a.micro_batch
+            opt.zero_grad(set_to_none=True)
+            loss_sum = tv_sum = top1_sum = 0.0
+            for mb in ids.split(a.micro_batch):
+                set_k(model, a.kt)
+                with torch.no_grad():
+                    lt = model(mb).logits[:, :-1]
+                set_k(model, a.kd)
+                ld = model(mb).logits[:, :-1]
+                loss = divergence(lt.reshape(-1, lt.shape[-1]), ld.reshape(-1, ld.shape[-1]), a.div).mean()
+                if not torch.isfinite(loss):
+                    raise FloatingPointError(f"non-finite loss at step {step}; rerun with --div fkl and record it")
+                (loss / n_micro).backward()
+                with torch.no_grad():
+                    tv_sum += divergence(lt.reshape(-1, lt.shape[-1]), ld.detach().reshape(-1, ld.shape[-1]), "tv").mean().item()
+                    top1_sum += (lt.argmax(-1) == ld.argmax(-1)).float().mean().item()
+                loss_sum += loss.item()
+                del lt, ld, loss
+            opt.step()
+            log.append({"step": step, "loss": loss_sum / n_micro, "tv": tv_sum / n_micro, "top1": top1_sum / n_micro,
+                        "t": time.time() - t0})
+            if step % 10 == 0 or step == a.steps - 1:
+                print(json.dumps(log[-1]), flush=True)
+            continue
         set_k(model, a.kt)
         with torch.no_grad():
             lt = model(ids).logits[:, :-1]

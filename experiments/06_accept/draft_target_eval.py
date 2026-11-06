@@ -34,6 +34,20 @@ INSTRUCT_PROMPTS = [
 ]
 
 
+def shrink_codes_(model):
+    """[specrq] store codes as uint8 when every stage has <= 256 entries (codes are cast to int32 per forward by
+    QuantizedWeight.get_codes, so outputs are unchanged); needed to fit Llama-8B C1 (int32 codes ~17 GB) on one GPU."""
+    import torch.nn as nn
+    n = 0
+    for m in model.modules():
+        if isinstance(m, QuantizedLinear):
+            qw = m.quantized_weight
+            if qw.codes is not None and qw.codes.dtype != torch.uint8 and int(qw.codes.max()) < 256 and int(qw.codes.min()) >= 0:
+                qw.codes = nn.Parameter(qw.codes.data.to(torch.uint8), requires_grad=False)
+                n += 1
+    return n
+
+
 def set_k(model, k):
     for m in model.modules():
         if isinstance(m, QuantizedLinear):
@@ -85,15 +99,20 @@ def main():
     ap.add_argument("--no_fp16", action="store_true")
     ap.add_argument("--draft", default=None, help="draft_codebooks.pt from train_draft_codebooks.py (draft-only copies)")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--codes_uint8", action="store_true", help="store 8-bit codes as uint8 (memory; outputs unchanged)")
+    ap.add_argument("--ref_device", default="cuda:0", help="device of the FP16 reference model")
     a = ap.parse_args()
     dev = torch.device("cuda:0")
     t0 = time.time()
     tok = AutoTokenizer.from_pretrained(a.model)
-    q = get_model(a.model, a.ckpt, "auto").to(dev).eval()
+    q = get_model(a.model, a.ckpt, "auto")
+    if a.codes_uint8:
+        print("codes -> uint8 for", shrink_codes_(q), "linears")
+    q = q.to(dev).eval()
     if a.draft:
         from src.draft import load_draft_state_dict
         print("loaded draft copies for", load_draft_state_dict(q, torch.load(a.draft)), "linears")
-    ref = None if a.no_fp16 else AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=q.dtype).to(dev).eval()
+    ref = None if a.no_fp16 else AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=q.dtype).to(a.ref_device).eval()
     res = {"model": a.model, "ckpt": a.ckpt, "draft": a.draft, "kd": a.kd, "kt": a.kt, "seqlen": a.seqlen}
 
     # ---- teacher-forced corpus metrics ----
@@ -111,7 +130,7 @@ def main():
             acc["nll_t"].append(F.cross_entropy(lt[:-1], y, reduction="none").cpu())
             acc["nll_d"].append(F.cross_entropy(ld[:-1], y, reduction="none").cpu())
             if ref is not None:
-                lr = ref(ids).logits.float()[0]
+                lr = ref(ids.to(a.ref_device)).logits.float()[0].to(dev)
                 acc["nll_ref"].append(F.cross_entropy(lr[:-1], y, reduction="none").cpu())
                 pr, lpr, lpt = lr[:-1].softmax(-1), lr[:-1].log_softmax(-1), lt[:-1].log_softmax(-1)
                 acc["kl_ref_t"].append((pr * (lpr - lpt)).sum(-1).cpu())
