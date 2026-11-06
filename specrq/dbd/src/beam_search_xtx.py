@@ -1,6 +1,6 @@
 """ Beam search that minimizes ||XWref - XWq||^2 w.r.t. Wq codes """
 import random
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 from torch.nn import functional as F
@@ -21,6 +21,7 @@ def beam_search_optimal_codes(
     dim_rng: Optional[random.Random] = None,
     sparsity_regularizer: float = 0,
     verbose: bool,
+    codebook_sizes: Optional[List[int]] = None,
 ):
     """
     :param XTX: pairwise products of input features matmul(X.transpose(), X), shape: [in_features, in_features]
@@ -36,6 +37,8 @@ def beam_search_optimal_codes(
     :param beam_size: consider up to this many best encoding combinations
     :param sparsity_regularizer: subtract this value from beam search objective each time you have a zero code somewhere
     :param verbose: if True, draw a progressbar and periodically print best loss
+    :param codebook_sizes: [specrq] optional per-codebook number of usable entries (stage j may only use the first
+      codebook_sizes[j] codes; the rest are masked out of the search). None = all entries (original behaviour).
     :return: best quantization codes found, same shape as prev_codes
 
     :intuition: the beam search needs to produce weight codes that minimize MSE error
@@ -107,6 +110,7 @@ def beam_search_optimal_codes(
                 codebook_index=codebook_index,
                 k_best=beam_size,
                 sparsity_regularizer=sparsity_regularizer,
+                num_valid_codes=-1 if codebook_sizes is None else int(codebook_sizes[codebook_index]),
             )  # [current beam_size, codebook_size, num_out_groups]
 
             # part 2: select beam_size new best codes and re-arrange beam to account for the fact that ...
@@ -155,6 +159,7 @@ def _beam_search_squared_errors(
     codebook_index: int,
     k_best: int,
     sparsity_regularizer: float,
+    num_valid_codes: int = -1,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Compute MSE or sum-of-squared-error losses for all possible ways to replace quantization codes for one input group
@@ -274,6 +279,9 @@ def _beam_search_squared_errors(
         if sparsity_regularizer != 0:
             candidate_squared_errors += sparsity_regularizer * (prev_codes_part[beam_id] == 0).to(XTX.dtype)[None, :]
             candidate_squared_errors[0, :] -= sparsity_regularizer
+
+        if 0 < num_valid_codes < codebook_size:  # [specrq] per-stage codebook size: mask unusable entries
+            candidate_squared_errors[num_valid_codes:, :] = float("inf")
 
         best_beam_squared_errors, best_beam_indices = torch.topk(
             candidate_squared_errors, k_best, dim=0, largest=False, sorted=False

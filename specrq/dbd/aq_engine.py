@@ -89,6 +89,8 @@ class AQEngine(nn.Module):
             max_points_per_centroid=args.init_max_points_per_centroid,
             devices=args.devices,
             verbose=True,
+            # [specrq] per-stage code bits; only passed when set, so the default path is unchanged
+            **({"codebook_bits": args.codebook_bits} if getattr(args, "codebook_bits", None) is not None else {}),
         )
 
         differentiable_parameters = nn.ParameterDict(

@@ -710,6 +710,14 @@ def main():
         help="[specrq] DbD block-Hadamard rotation: random signs + block FWHT on each linear's input dim",
     )
     parser.add_argument(
+        "--codebook_bits",
+        type=int,
+        nargs="+",
+        default=None,
+        help="[specrq] per-stage code bits (one per codebook, e.g. 12 12 8 8); stage j uses only 2**bits[j] entries. "
+        "--nbits_per_codebook must equal max(codebook_bits). Default: every stage uses --nbits_per_codebook",
+    )
+    parser.add_argument(
         "--eval_num_codebooks",
         type=int,
         nargs="+",
@@ -894,6 +902,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     args = parser.parse_args()
+    if args.codebook_bits is not None:
+        assert len(args.codebook_bits) == args.num_codebooks, "--codebook_bits needs one value per codebook"
+        assert max(args.codebook_bits) == args.nbits_per_codebook, "--nbits_per_codebook must equal max(--codebook_bits)"
     aq_engine_module.DEFAULT_ACCUMULATOR_DTYPE = getattr(torch, args.accum_dtype)
     if args.devices is None:
         if torch.cuda.is_available():

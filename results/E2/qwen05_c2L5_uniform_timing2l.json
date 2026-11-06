@@ -1,0 +1,270 @@
+{
+ "exp": "E2",
+ "run": "qwen05_c2L5_uniform_timing2l",
+ "time": "2026-11-06T12:54:08",
+ "commit": "5150ce6",
+ "dirty_files": 5,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "setting": "C2-L5: d=8, K=4096 (nbits 12), M=5, uniform alpha [.2]*5, Hadamard, wikitext2 1024x4096, accum fp64, FT 32/10/3/keep_best, rel_tol 0.01, offload; first 2 layers only",
+  "ckpt": "/data/lsh/ckpts/weightvq/timing/qwen05_c2L5_uniform_2l_fp64",
+  "gpu": 3,
+  "cpu": "OMP/MKL=8, nice 10, taskset 0-15,32-47",
+  "tmux_job": "sr-e2_qwen05_c2L5_uniform_timing2l",
+  "log": "/data/lsh/logs/e2_qwen05_c2L5_uniform_timing2l.log",
+  "compare_c1": "same settings with K=256: layers 0-1 of the running full run /data/lsh/logs/e3_qwen05_uniform_c1.log (GPU 2, concurrent; no per-line timestamps, so only layer_time / AQ in-process time)",
+  "scripts": [
+   "experiments/09_c2_timing/run_c2_timing.sh",
+   "experiments/09_c2_timing/parse_timing.py"
+  ]
+ },
+ "metrics": {
+  "c2_layers": [
+   {
+    "layer": 0,
+    "layer_time_s": 771.9931268692017,
+    "out_loss": 0.0008349374984391034,
+    "out_val_loss": 0.0008269273675978184,
+    "modules": [
+     {
+      "name": "self_attn.q_proj",
+      "n_epoch_starts": 10,
+      "aq_s_inproc": 18.53,
+      "epoch_s_mean": 2.058888888888889
+     },
+     {
+      "name": "self_attn.k_proj",
+      "n_epoch_starts": 15,
+      "aq_s_inproc": 8.13,
+      "epoch_s_mean": 0.5807142857142857
+     },
+     {
+      "name": "self_attn.v_proj",
+      "n_epoch_starts": 13,
+      "aq_s_inproc": 7.06,
+      "epoch_s_mean": 0.5883333333333333
+     },
+     {
+      "name": "self_attn.o_proj",
+      "n_epoch_starts": 9,
+      "aq_s_inproc": 15.1,
+      "epoch_s_mean": 1.8875
+     },
+     {
+      "name": "mlp.gate_proj",
+      "n_epoch_starts": 4,
+      "aq_s_inproc": 26.5,
+      "epoch_s_mean": 8.833333333333334
+     },
+     {
+      "name": "mlp.up_proj",
+      "n_epoch_starts": 4,
+      "aq_s_inproc": 26.4,
+      "epoch_s_mean": 8.799999999999999
+     },
+     {
+      "name": "mlp.down_proj",
+      "n_epoch_starts": 4,
+      "aq_s_inproc": 118.13,
+      "epoch_s_mean": 39.376666666666665
+     }
+    ],
+    "pre_s": 203.36999988555908,
+    "init_s": 62.96000003814697,
+    "aq_s": 220.11999988555908,
+    "ft_s": 280.15000009536743,
+    "post_s": 5.389999866485596
+   },
+   {
+    "layer": 1,
+    "layer_time_s": 704.8645730018616,
+    "out_loss": 0.0002928113972302526,
+    "out_val_loss": 0.0002914989017881453,
+    "modules": [
+     {
+      "name": "self_attn.q_proj",
+      "n_epoch_starts": 5,
+      "aq_s_inproc": 8.28,
+      "epoch_s_mean": 2.07
+     },
+     {
+      "name": "self_attn.k_proj",
+      "n_epoch_starts": 8,
+      "aq_s_inproc": 8.51,
+      "epoch_s_mean": 1.2157142857142857
+     },
+     {
+      "name": "self_attn.v_proj",
+      "n_epoch_starts": 8,
+      "aq_s_inproc": 8.44,
+      "epoch_s_mean": 1.2057142857142857
+     },
+     {
+      "name": "self_attn.o_proj",
+      "n_epoch_starts": 7,
+      "aq_s_inproc": 12.47,
+      "epoch_s_mean": 2.0783333333333336
+     },
+     {
+      "name": "mlp.gate_proj",
+      "n_epoch_starts": 4,
+      "aq_s_inproc": 26.38,
+      "epoch_s_mean": 8.793333333333333
+     },
+     {
+      "name": "mlp.up_proj",
+      "n_epoch_starts": 3,
+      "aq_s_inproc": 17.72,
+      "epoch_s_mean": 8.86
+     },
+     {
+      "name": "mlp.down_proj",
+      "n_epoch_starts": 3,
+      "aq_s_inproc": 78.85,
+      "epoch_s_mean": 39.425
+     }
+    ],
+    "pre_s": 203.78000020980835,
+    "init_s": 62.31999969482422,
+    "aq_s": 160.90000009536743,
+    "ft_s": 272.5400002002716,
+    "post_s": 5.319999933242798
+   }
+  ],
+  "c1_uniform_layers_0_1": [
+   {
+    "layer": 0,
+    "layer_time_s": 792.1911084651947,
+    "out_loss": 0.004677083808928728,
+    "out_val_loss": 0.004611068405210972,
+    "modules": [
+     {
+      "name": "self_attn.q_proj",
+      "n_epoch_starts": 9,
+      "aq_s_inproc": 16.25,
+      "epoch_s_mean": 2.03125
+     },
+     {
+      "name": "self_attn.k_proj",
+      "n_epoch_starts": 10,
+      "aq_s_inproc": 10.18,
+      "epoch_s_mean": 1.1311111111111112
+     },
+     {
+      "name": "self_attn.v_proj",
+      "n_epoch_starts": 6,
+      "aq_s_inproc": 3.45,
+      "epoch_s_mean": 0.6900000000000001
+     },
+     {
+      "name": "self_attn.o_proj",
+      "n_epoch_starts": 8,
+      "aq_s_inproc": 13.05,
+      "epoch_s_mean": 1.8642857142857143
+     },
+     {
+      "name": "mlp.gate_proj",
+      "n_epoch_starts": 4,
+      "aq_s_inproc": 23.1,
+      "epoch_s_mean": 7.7
+     },
+     {
+      "name": "mlp.up_proj",
+      "n_epoch_starts": 3,
+      "aq_s_inproc": 15.04,
+      "epoch_s_mean": 7.52
+     },
+     {
+      "name": "mlp.down_proj",
+      "n_epoch_starts": 4,
+      "aq_s_inproc": 111.94,
+      "epoch_s_mean": 37.31333333333333
+     }
+    ]
+   },
+   {
+    "layer": 1,
+    "layer_time_s": 609.5529413223267,
+    "out_loss": 0.0019524103263393044,
+    "out_val_loss": 0.0019409751985222101,
+    "modules": [
+     {
+      "name": "self_attn.q_proj",
+      "n_epoch_starts": 5,
+      "aq_s_inproc": 7.89,
+      "epoch_s_mean": 1.9725
+     },
+     {
+      "name": "self_attn.k_proj",
+      "n_epoch_starts": 5,
+      "aq_s_inproc": 4.68,
+      "epoch_s_mean": 1.17
+     },
+     {
+      "name": "self_attn.v_proj",
+      "n_epoch_starts": 4,
+      "aq_s_inproc": 3.63,
+      "epoch_s_mean": 1.21
+     },
+     {
+      "name": "self_attn.o_proj",
+      "n_epoch_starts": 9,
+      "aq_s_inproc": 15.44,
+      "epoch_s_mean": 1.93
+     },
+     {
+      "name": "mlp.gate_proj",
+      "n_epoch_starts": 4,
+      "aq_s_inproc": 22.56,
+      "epoch_s_mean": 7.52
+     },
+     {
+      "name": "mlp.up_proj",
+      "n_epoch_starts": 3,
+      "aq_s_inproc": 15.04,
+      "epoch_s_mean": 7.52
+     },
+     {
+      "name": "mlp.down_proj",
+      "n_epoch_starts": 3,
+      "aq_s_inproc": 74.69,
+      "epoch_s_mean": 37.345
+     }
+    ]
+   }
+  ],
+  "wall_s": 1546.86,
+  "host_max_rss_gib": 18.494792938232422,
+  "gpu_max_memory_allocated_gib": 4.422316551208496,
+  "gpu_nvidia_smi_peak_mib": 7180,
+  "avg_bits_per_weight_layer_incl_codebooks": {
+   "c2": 8.744,
+   "c1": 5.091
+  },
+  "ft_best_loss": {
+   "c2": [
+    2.39e-05,
+    1.9e-05
+   ],
+   "c1_uniform": [
+    0.000149,
+    0.000129
+   ]
+  },
+  "estimate_qwen_24_layers_h_I": 4.92285899957021
+ },
+ "notes": "Stage times from per-line timestamps: pre = calc outs before quantization + XTX accumulation; init = k-means; aq = Adam steps + beam search (not separable without code instrumentation; per-epoch mean given per module); ft; post. C2 per-epoch AQ time ~= C1 on Qwen; k-means init 63 s/layer. Estimates are [I]."
+}

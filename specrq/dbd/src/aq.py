@@ -75,6 +75,7 @@ class QuantizedWeight(nn.Module):
         scale_nbits: int = 0,
         straight_through_gradient: Optional[bool] = None,
         code_dtype: torch.dtype = torch.int32,
+        codebook_bits: Optional[List[int]] = None,
         **init_kwargs,
     ):
         super().__init__()
@@ -88,6 +89,14 @@ class QuantizedWeight(nn.Module):
         self.num_codebooks = num_codebooks
         self.nbits_per_codebook = nbits_per_codebook
         self.codebook_size = codebook_size = 2**nbits_per_codebook
+        # [specrq] optional per-stage code bits (stage j uses only the first 2**codebook_bits[j] entries of its codebook;
+        # storage stays [num_codebooks, 2**nbits_per_codebook, ...], unused entries are zero and never selected)
+        self.codebook_bits = None
+        if codebook_bits is not None:
+            codebook_bits = [int(b) for b in codebook_bits]
+            assert len(codebook_bits) == num_codebooks, (codebook_bits, num_codebooks)
+            assert max(codebook_bits) == nbits_per_codebook, "nbits_per_codebook must equal max(codebook_bits)"
+            self.codebook_bits = codebook_bits
         self.codebook_value_nbits = codebook_value_nbits
         self.codebook_value_num_groups = codebook_value_num_groups
         self.codebook_value_clusters = None
@@ -129,6 +138,7 @@ class QuantizedWeight(nn.Module):
             out_group_size=out_group_size,
             in_group_size=in_group_size,
             codebook_size=self.codebook_size,
+            codebook_sizes=self.get_codebook_sizes(),
             **init_kwargs,
         )
 
@@ -139,6 +149,11 @@ class QuantizedWeight(nn.Module):
             codes.to(code_dtype), requires_grad=False
         )  # [num_out_groups, num_in_groups, num_codebooks]
         self.codes_storage: Optional[IntCodes] = None  # storage for FSDP compatibility
+
+    def get_codebook_sizes(self) -> Optional[List[int]]:
+        """[specrq] per-stage usable codebook sizes, or None if all stages use 2**nbits_per_codebook entries"""
+        bits = getattr(self, "codebook_bits", None)
+        return None if bits is None else [2**b for b in bits]
 
     def get_codes(self) -> torch.IntTensor:
         """Get a non view to codes, regardless of how codes are stored"""
@@ -274,6 +289,9 @@ class QuantizedWeight(nn.Module):
         codebooks = self.get_codebooks()
         prev_codes = self.get_codes()[selection]
         scales = self.get_scales()[selection]
+        if self.get_codebook_sizes() is not None:
+            assert XTX is not None, "[specrq] per-stage codebook sizes are only implemented for the XTX beam search"
+            kwargs["codebook_sizes"] = self.get_codebook_sizes()
         if XTX is not None:
             new_codes = beam_search_minimize_activation_mse(
                 XTX=XTX,
@@ -297,9 +315,14 @@ class QuantizedWeight(nn.Module):
         num_out_groups = self.out_features // self.out_group_size
         num_in_groups = self.in_features // self.in_group_size
 
-        matrix_store = num_parameters // group_size * self.num_codebooks * self.nbits_per_codebook
+        bits = getattr(self, "codebook_bits", None)
+        if bits is None:
+            matrix_store = num_parameters // group_size * self.num_codebooks * self.nbits_per_codebook
 
-        codebooks_store = self.num_codebooks * self.codebook_size * group_size * self.codebook_value_nbits
+            codebooks_store = self.num_codebooks * self.codebook_size * group_size * self.codebook_value_nbits
+        else:  # [specrq] per-stage code bits; codebook j stores only its 2**bits[j] usable entries
+            matrix_store = num_parameters // group_size * sum(bits)
+            codebooks_store = sum(2**b for b in bits) * group_size * self.codebook_value_nbits
         if self.codebook_value_nbits < 16:
             codebooks_store += (
                 2**self.codebook_value_nbits * self.num_codebooks * self.codebook_value_num_groups * group_size * 16
@@ -329,6 +352,7 @@ def init_aq_kmeans(
     out_group_size: int,
     in_group_size: int,
     codebook_size: int,
+    codebook_sizes: Optional[List[int]] = None,
     verbose: bool = False,
     use_faiss: bool = False,
     max_points_per_centroid: Optional[int] = None,
@@ -358,7 +382,10 @@ def init_aq_kmeans(
     if max_points_per_centroid is not None:
         print("Clustering:", max_points_per_centroid * codebook_size, "points from", weight_residue.shape[0])
 
-    for _ in trange(num_codebooks, desc="initializing with kmeans") if verbose else range(num_codebooks):
+    full_codebook_size = codebook_size
+    for _i in trange(num_codebooks, desc="initializing with kmeans") if verbose else range(num_codebooks):
+        if codebook_sizes is not None:  # [specrq] stage-specific K; codebook padded with zeros to full size below
+            codebook_size = codebook_sizes[_i]
         if use_faiss:
             codebook_i, codes_i, reconstructed_weight_i = fit_faiss_kmeans(
                 weight_residue,
@@ -384,6 +411,9 @@ def init_aq_kmeans(
 
         codes_i = codes_i.reshape(num_out_groups, num_in_groups, 1)
         codebook_i = codebook_i.reshape(1, codebook_size, out_group_size, in_group_size)
+        if codebook_size < full_codebook_size:
+            codebook_i = torch.cat([codebook_i, codebook_i.new_zeros(
+                1, full_codebook_size - codebook_size, out_group_size, in_group_size)], dim=1)
         weight_residue -= reconstructed_weight_i
         codes.append(codes_i)
         codebooks.append(codebook_i)
