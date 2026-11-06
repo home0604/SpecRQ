@@ -25,9 +25,13 @@ the first confirmed stop token (kept in the output) or at n_new confirmed tokens
         and it is inside the timed wall.
   Spec: the accepted tokens d_1..d_a, v_a of a round are cut at the first stop token; output is also cut at n_new.
   tokens_per_s = confirmed decode tokens (after the cut, excluding the prefill token) / decode wall time.
+record_logits=True (diagnostics only, never timed): AR keeps the full-vocab logits row of every step (M=1 path),
+Spec keeps the verify logits row of every confirmed token; token_logits(i) returns the row that produced token i
+(i = 0: prefill logits). Used by tie_report() to classify AR/spec divergences as bf16 near-ties.
 """
 from __future__ import annotations
 
+import math
 import time
 
 import torch
@@ -51,8 +55,11 @@ class _Graph:
 
 
 class ARDecoder:
-    def __init__(self, model, T_max, k=None, use_draft=False, n_max=4096, vd=None, eos=None):
+    def __init__(self, model, T_max, k=None, use_draft=False, n_max=4096, vd=None, eos=None, record_logits=False):
         self.m, self.k, self.use_draft, self.vd = model, k, use_draft, vd
+        assert not (record_logits and vd), "record_logits is for the full-vocab target path"
+        self.logbuf = torch.zeros(n_max, model.lm_head.shape[0], dtype=model.dtype, device=model.device) \
+            if record_logits else None
         self.eos = frozenset(int(e) for e in eos) if eos else None
         self.hbuf = torch.zeros(n_max, dtype=torch.long, pin_memory=True) if self.eos else None
         self.hev = [torch.cuda.Event() for _ in range(n_max)] if self.eos else None
@@ -67,6 +74,8 @@ class ARDecoder:
     def _step(self):
         logits = self.m.forward(self.tok, self.pos, self.cache, self.k, self.use_draft, last_only=True, vd=self.vd)
         nxt = self.m.to_token_ids(logits.argmax(-1), self.vd)
+        if self.logbuf is not None:
+            self.logbuf.index_copy_(0, self.idx.view(1), logits)
         self.out.index_copy_(0, self.idx.view(1), nxt)
         self.tok.copy_(nxt)
         self.pos.add_(1)
@@ -81,6 +90,7 @@ class ARDecoder:
         first = m.to_token_ids(logits.argmax(-1), self.vd)
         _sync()
         t_prefill = time.perf_counter() - t0
+        self.first_logits = logits[0].clone() if self.logbuf is not None else None
         self.tok.copy_(first)
         self.pos.fill_(prompt.numel())
         self.idx.zero_()
@@ -120,8 +130,11 @@ class ARDecoder:
 
 
 class SpecDecoder:
-    def __init__(self, model, T_max, gamma, k_draft, k_target=None, use_draft=False, vd=None, eos=None):
+    def __init__(self, model, T_max, gamma, k_draft, k_target=None, use_draft=False, vd=None, eos=None,
+                 record_logits=False):
         self.m, self.g, self.kd, self.kt, self.use_draft, self.vd = model, gamma, k_draft, k_target, use_draft, vd
+        self.vlog = torch.zeros(gamma + 1, model.lm_head.shape[0], dtype=model.dtype, device=model.device) \
+            if record_logits else None
         self.eos = frozenset(int(e) for e in eos) if eos else None
         self.tc, self.dc = model.new_cache(T_max), model.new_cache(T_max)
         dev = model.device
@@ -147,6 +160,8 @@ class SpecDecoder:
     def _verify(self):
         logits = self.m.forward(self.buf, self.n, self.tc, self.kt, False)
         self.vout.copy_(logits.argmax(-1))
+        if self.vlog is not None:
+            self.vlog.copy_(logits)
 
     @torch.no_grad()
     def generate(self, prompt, n_new):
@@ -158,6 +173,7 @@ class SpecDecoder:
         first = int(logits.argmax(-1))
         _sync()
         t_prefill = time.perf_counter() - t0
+        rec = [logits[-1:].clone()] if self.vlog is not None else None
         out = [first]
         n, cur, catch_up, prev_last = prompt.numel(), first, False, 0
         ev = [(torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True),
@@ -192,6 +208,8 @@ class SpecDecoder:
                 elif len(new) > room:
                     new = new[:room]
             out.extend(new)
+            if rec is not None:  # confirmed token k of this round = argmax of verify row k
+                rec.append(self.vlog[:len(new)].clone())
             accepted.append(a)
             catch_up, prev_last = a == g, d[g - 1]
             n += a + 1
@@ -203,6 +221,7 @@ class SpecDecoder:
         t_ver = sum(ev[i][1].elapsed_time(ev[i][2]) for i in range(rounds)) / 1e3
         n_tok = len(out) - 1  # tokens confirmed during decode (the first comes from prefill)
         rounds = max(rounds, 1)
+        self.rec_logits = torch.cat(rec)[:n_new] if rec is not None else None
         extra = {} if self.eos is None else {"eos_hit": out[-1] in self.eos}
         return out[:n_new], {**extra,
             "t_prefill_s": t_prefill, "t_decode_s": t_dec, "t_draft_s": t_draft, "t_verify_s": t_ver,
@@ -210,6 +229,32 @@ class SpecDecoder:
             "tokens_per_s": n_tok / t_dec, "tau": n_tok / rounds, "accept_rate": sum(accepted) / (g * rounds),
             "t_draft_round_ms": 1e3 * t_draft / rounds, "t_verify_ms": 1e3 * t_ver / rounds,
             "t_overhead_ms": 1e3 * (t_dec - t_draft - t_ver) / rounds}
+
+
+def ar_token_logits(ar, i):
+    return ar.first_logits if i == 0 else ar.logbuf[i - 1]
+
+
+def bf16_ulp(x):
+    x = abs(float(x))
+    return 2.0 ** (math.floor(math.log2(x)) - 7) if x > 0 else 2.0 ** -133
+
+
+def tie_report(i, ar_tok, sp_tok, ar_logits, v_logits=None, max_ulps=2):
+    """Divergence at token i: AR chose ar_tok, spec sp_tok. gap_ar = l_AR[ar_tok] - l_AR[sp_tok] on the M=1 AR path
+    (>= 0); gap_verify = l_V[sp_tok] - l_V[ar_tok] on the verify row that produced sp_tok (>= 0). near_tie if the AR
+    gap is <= max_ulps bf16 ulps at the magnitude of the larger of the two logits."""
+    la = ar_logits.float()
+    ga = float(la[ar_tok] - la[sp_tok])
+    ulp = bf16_ulp(max(abs(float(la[ar_tok])), abs(float(la[sp_tok]))))
+    r = {"index": i, "ar_tok": int(ar_tok), "spec_tok": int(sp_tok), "logit_ar_tok": float(la[ar_tok]),
+         "gap_ar": ga, "ulp": ulp, "gap_ar_ulps": ga / ulp, "near_tie": ga <= max_ulps * ulp,
+         "ar_top2": [int(t) for t in la.topk(2).indices]}
+    if v_logits is not None:
+        lv = v_logits.float()
+        r["gap_verify"] = float(lv[sp_tok] - lv[ar_tok])
+        r["gap_verify_ulps"] = r["gap_verify"] / ulp
+    return r
 
 
 def first_divergence(a, b):
