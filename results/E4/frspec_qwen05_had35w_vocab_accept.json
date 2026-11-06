@@ -1,0 +1,933 @@
+{
+ "exp": "E4",
+ "run": "frspec_qwen05_had35w_vocab_accept",
+ "time": "2026-11-06T10:47:36",
+ "commit": "0cc1e79",
+ "dirty_files": 10,
+ "host": "shark",
+ "cuda_visible_devices": "3",
+ "tmux_job": "sr-frspec_gpu",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "/data/models/qwen2.5_0.5b_instruct",
+  "ckpt": "/data/lsh/ckpts/weightvq/qwen05/c1_had35w_wt2_fp64",
+  "freq_dir": "/data/lsh/frspec/qwen25_05b_instruct_pileval",
+  "kt": 5,
+  "kds": [
+   3,
+   2,
+   1
+  ],
+  "vds": [
+   8192,
+   16384,
+   32768,
+   65536,
+   0
+  ],
+  "V": 151936,
+  "seqlen": 512,
+  "setting": "FR-Spec draft vocab: greedy draft(kd, V_d) vs target(kt) agreement, NestModel, bf16",
+  "n_windows": 40,
+  "gen_tokens": 128,
+  "n_corpus_prompts": 8,
+  "instruct_prompts": [
+   "Explain the difference between a list and a tuple in Python.",
+   "Write a short poem about the ocean at night.",
+   "What are three common causes of high blood pressure?",
+   "Summarize the plot of Romeo and Juliet in four sentences.",
+   "Give step-by-step instructions to make a cup of green tea.",
+   "Why is the sky blue? Answer for a ten-year-old.",
+   "Translate to French: The meeting has been moved to Thursday afternoon.",
+   "List five tips for writing clear technical documentation."
+  ]
+ },
+ "metrics": {
+  "pileval_coverage": {
+   "8192": 0.8490406274795532,
+   "16384": 0.9102272391319275,
+   "32768": 0.9598604440689087,
+   "65536": 0.9925897717475891,
+   "151936": 1.0
+  },
+  "wikitext2": {
+   "n_windows": 40,
+   "n_tokens": 20440,
+   "agree": {
+    "kd3": {
+     "8192": 0.6115459882583171,
+     "16384": 0.6283757338551859,
+     "32768": 0.6422700587084149,
+     "65536": 0.6495107632093934,
+     "151936": 0.6521526418786693
+    },
+    "kd2": {
+     "8192": 0.1558219178082192,
+     "16384": 0.15601761252446184,
+     "32768": 0.15772994129158513,
+     "65536": 0.15772994129158513,
+     "151936": 0.15684931506849314
+    },
+    "kd1": {
+     "8192": 0.0070450097847358124,
+     "16384": 0.0066046966731898235,
+     "32768": 0.006555772994129159,
+     "65536": 0.00611545988258317,
+     "151936": 0.005724070450097847
+    }
+   },
+   "agree_kt_subset": {
+    "8192": 0.887720156555773,
+    "16384": 0.9367416829745597,
+    "32768": 0.9712328767123287,
+    "65536": 0.9901663405088063,
+    "151936": 1.0
+   },
+   "target_argmax_oov": {
+    "8192": 0.10954011741682974,
+    "16384": 0.06032289628180039,
+    "32768": 0.025587084148727984,
+    "65536": 0.006653620352250489
+   },
+   "gold_in_subset": {
+    "8192": 0.8286203522504892,
+    "16384": 0.8940802348336595,
+    "32768": 0.9494618395303327,
+    "65536": 0.9888943248532289
+   }
+  },
+  "c4": {
+   "n_windows": 40,
+   "n_tokens": 20440,
+   "agree": {
+    "kd3": {
+     "8192": 0.6035714285714285,
+     "16384": 0.6206457925636008,
+     "32768": 0.6353228962818004,
+     "65536": 0.6419275929549902,
+     "151936": 0.6419765166340509
+    },
+    "kd2": {
+     "8192": 0.17490215264187867,
+     "16384": 0.17534246575342466,
+     "32768": 0.17588062622309197,
+     "65536": 0.1759784735812133,
+     "151936": 0.17529354207436398
+    },
+    "kd1": {
+     "8192": 0.002544031311154599,
+     "16384": 0.002397260273972603,
+     "32768": 0.0023483365949119373,
+     "65536": 0.002299412915851272,
+     "151936": 0.002201565557729941
+    }
+   },
+   "agree_kt_subset": {
+    "8192": 0.9039628180039139,
+    "16384": 0.9436888454011741,
+    "32768": 0.975587084148728,
+    "65536": 0.9936399217221135,
+    "151936": 1.0
+   },
+   "target_argmax_oov": {
+    "8192": 0.09143835616438356,
+    "16384": 0.051516634050880625,
+    "32768": 0.019618395303326812,
+    "65536": 0.0015655577299412916
+   },
+   "gold_in_subset": {
+    "8192": 0.8517123287671233,
+    "16384": 0.914334637964775,
+    "32768": 0.9661448140900196,
+    "65536": 0.9975048923679061
+   }
+  },
+  "greedy_sim": {
+   "instruct": {
+    "target_path_oov": {
+     "8192": 0.1416015625,
+     "16384": 0.1005859375,
+     "32768": 0.046875,
+     "65536": 0.0087890625
+    },
+    "target_path_oov_top_ids": {
+     "8192": [
+      [
+       33975,
+       "Human",
+       6
+      ],
+      [
+       151644,
+       "<|im_start|>",
+       6
+      ],
+      [
+       95518,
+       "**:",
+       6
+      ],
+      [
+       26528,
+       "Ġreminder",
+       5
+      ],
+      [
+       10041,
+       "Ġcanvas",
+       3
+      ],
+      [
+       7886,
+       "Ġsym",
+       3
+      ],
+      [
+       29648,
+       "phony",
+       3
+      ],
+      [
+       71024,
+       "ĠJuliet",
+       3
+      ],
+      [
+       89901,
+       "apot",
+       3
+      ],
+      [
+       37905,
+       "ĠLists",
+       2
+      ],
+      [
+       22377,
+       "apple",
+       2
+      ],
+      [
+       86628,
+       "cessive",
+       2
+      ],
+      [
+       43215,
+       "Ġhormones",
+       2
+      ],
+      [
+       70192,
+       "ĠRomeo",
+       2
+      ],
+      [
+       10771,
+       "ĠPlace",
+       2
+      ],
+      [
+       6973,
+       "Ġdro",
+       2
+      ],
+      [
+       89492,
+       "plets",
+       2
+      ],
+      [
+       76796,
+       "animals",
+       2
+      ],
+      [
+       62698,
+       "ĠConc",
+       2
+      ],
+      [
+       12023,
+       "ĠClear",
+       2
+      ]
+     ],
+     "16384": [
+      [
+       33975,
+       "Human",
+       6
+      ],
+      [
+       151644,
+       "<|im_start|>",
+       6
+      ],
+      [
+       95518,
+       "**:",
+       6
+      ],
+      [
+       26528,
+       "Ġreminder",
+       5
+      ],
+      [
+       29648,
+       "phony",
+       3
+      ],
+      [
+       71024,
+       "ĠJuliet",
+       3
+      ],
+      [
+       89901,
+       "apot",
+       3
+      ],
+      [
+       37905,
+       "ĠLists",
+       2
+      ],
+      [
+       22377,
+       "apple",
+       2
+      ],
+      [
+       86628,
+       "cessive",
+       2
+      ],
+      [
+       43215,
+       "Ġhormones",
+       2
+      ],
+      [
+       70192,
+       "ĠRomeo",
+       2
+      ],
+      [
+       89492,
+       "plets",
+       2
+      ],
+      [
+       76796,
+       "animals",
+       2
+      ],
+      [
+       62698,
+       "ĠConc",
+       2
+      ],
+      [
+       12023,
+       "ĠClear",
+       2
+      ],
+      [
+       63594,
+       "Ġconcise",
+       2
+      ],
+      [
+       34006,
+       "ĠAvoid",
+       2
+      ],
+      [
+       14405,
+       "Ġtuple",
+       1
+      ],
+      [
+       66503,
+       "Ġcontiguous",
+       1
+      ]
+     ],
+     "32768": [
+      [
+       151644,
+       "<|im_start|>",
+       6
+      ],
+      [
+       71024,
+       "ĠJuliet",
+       3
+      ],
+      [
+       89901,
+       "apot",
+       3
+      ],
+      [
+       37905,
+       "ĠLists",
+       2
+      ],
+      [
+       86628,
+       "cessive",
+       2
+      ],
+      [
+       70192,
+       "ĠRomeo",
+       2
+      ],
+      [
+       62698,
+       "ĠConc",
+       2
+      ],
+      [
+       63594,
+       "Ġconcise",
+       2
+      ],
+      [
+       66503,
+       "Ġcontiguous",
+       1
+      ],
+      [
+       25804,
+       "Ġmutable",
+       1
+      ],
+      [
+       87747,
+       "banana",
+       1
+      ],
+      [
+       67898,
+       "ruits",
+       1
+      ],
+      [
+       81657,
+       "Ġhues",
+       1
+      ],
+      [
+       51302,
+       "Ġbeacon",
+       1
+      ],
+      [
+       82441,
+       "ĠSodium",
+       1
+      ],
+      [
+       40962,
+       "ĠConsum",
+       1
+      ],
+      [
+       67402,
+       "ĠLack",
+       1
+      ],
+      [
+       70530,
+       "Ġknights",
+       1
+      ],
+      [
+       50590,
+       "Prepare",
+       1
+      ],
+      [
+       20236,
+       "ĠEquipment",
+       1
+      ]
+     ],
+     "65536": [
+      [
+       151644,
+       "<|im_start|>",
+       6
+      ],
+      [
+       87747,
+       "banana",
+       1
+      ],
+      [
+       40962,
+       "ĠConsum",
+       1
+      ],
+      [
+       77091,
+       "assistant",
+       1
+      ]
+     ]
+    },
+    "kd3": {
+     "8192": {
+      "match_rate": 0.619140625,
+      "gamma1_tokens_per_iter": 1.615141955835962,
+      "gamma2_tokens_per_iter": 2.007843137254902,
+      "gamma4_tokens_per_iter": 2.354022988505747
+     },
+     "16384": {
+      "match_rate": 0.6318359375,
+      "gamma1_tokens_per_iter": 1.6357827476038338,
+      "gamma2_tokens_per_iter": 2.048,
+      "gamma4_tokens_per_iter": 2.4265402843601898
+     },
+     "32768": {
+      "match_rate": 0.66015625,
+      "gamma1_tokens_per_iter": 1.656957928802589,
+      "gamma2_tokens_per_iter": 2.1069958847736627,
+      "gamma4_tokens_per_iter": 2.5472636815920398
+     },
+     "65536": {
+      "match_rate": 0.677734375,
+      "gamma1_tokens_per_iter": 1.6814449917898193,
+      "gamma2_tokens_per_iter": 2.169491525423729,
+      "gamma4_tokens_per_iter": 2.6391752577319587
+     },
+     "151936": {
+      "match_rate": 0.6806640625,
+      "gamma1_tokens_per_iter": 1.6814449917898193,
+      "gamma2_tokens_per_iter": 2.1740976645435244,
+      "gamma4_tokens_per_iter": 2.6391752577319587
+     }
+    },
+    "kd2": {
+     "8192": {
+      "match_rate": 0.14453125,
+      "gamma1_tokens_per_iter": 1.1428571428571428,
+      "gamma2_tokens_per_iter": 1.1662870159453302,
+      "gamma4_tokens_per_iter": 1.1689497716894977
+     },
+     "16384": {
+      "match_rate": 0.14453125,
+      "gamma1_tokens_per_iter": 1.1428571428571428,
+      "gamma2_tokens_per_iter": 1.1662870159453302,
+      "gamma4_tokens_per_iter": 1.1689497716894977
+     },
+     "32768": {
+      "match_rate": 0.146484375,
+      "gamma1_tokens_per_iter": 1.1441340782122904,
+      "gamma2_tokens_per_iter": 1.1689497716894977,
+      "gamma4_tokens_per_iter": 1.17162471395881
+     },
+     "65536": {
+      "match_rate": 0.1474609375,
+      "gamma1_tokens_per_iter": 1.145413870246085,
+      "gamma2_tokens_per_iter": 1.1702857142857144,
+      "gamma4_tokens_per_iter": 1.172966781214204
+     },
+     "151936": {
+      "match_rate": 0.1484375,
+      "gamma1_tokens_per_iter": 1.145413870246085,
+      "gamma2_tokens_per_iter": 1.17162471395881,
+      "gamma4_tokens_per_iter": 1.1743119266055047
+     }
+    },
+    "kd1": {
+     "8192": {
+      "match_rate": 0.001953125,
+      "gamma1_tokens_per_iter": 1.0019569471624266,
+      "gamma2_tokens_per_iter": 1.0019569471624266,
+      "gamma4_tokens_per_iter": 1.0019569471624266
+     },
+     "16384": {
+      "match_rate": 0.001953125,
+      "gamma1_tokens_per_iter": 1.0019569471624266,
+      "gamma2_tokens_per_iter": 1.0019569471624266,
+      "gamma4_tokens_per_iter": 1.0019569471624266
+     },
+     "32768": {
+      "match_rate": 0.001953125,
+      "gamma1_tokens_per_iter": 1.0019569471624266,
+      "gamma2_tokens_per_iter": 1.0019569471624266,
+      "gamma4_tokens_per_iter": 1.0019569471624266
+     },
+     "65536": {
+      "match_rate": 0.001953125,
+      "gamma1_tokens_per_iter": 1.0019569471624266,
+      "gamma2_tokens_per_iter": 1.0019569471624266,
+      "gamma4_tokens_per_iter": 1.0019569471624266
+     },
+     "151936": {
+      "match_rate": 0.0009765625,
+      "gamma1_tokens_per_iter": 1.0009775171065494,
+      "gamma2_tokens_per_iter": 1.0009775171065494,
+      "gamma4_tokens_per_iter": 1.0009775171065494
+     }
+    }
+   },
+   "wikitext2": {
+    "target_path_oov": {
+     "8192": 0.13671875,
+     "16384": 0.07421875,
+     "32768": 0.0224609375,
+     "65536": 0.0
+    },
+    "target_path_oov_top_ids": {
+     "8192": [
+      [
+       32794,
+       "Ġpoem",
+       17
+      ],
+      [
+       19036,
+       "ĠNavy",
+       9
+      ],
+      [
+       56133,
+       "ĠAlexandria",
+       9
+      ],
+      [
+       88989,
+       "Ġevacuate",
+       8
+      ],
+      [
+       27600,
+       "uez",
+       8
+      ],
+      [
+       56357,
+       "ĠConfederate",
+       7
+      ],
+      [
+       75524,
+       "Ġcruiser",
+       7
+      ],
+      [
+       32762,
+       "Ġmeditation",
+       7
+      ],
+      [
+       39260,
+       "Ġpoet",
+       6
+      ],
+      [
+       25099,
+       "Ġfleet",
+       5
+      ],
+      [
+       24654,
+       "Ġemphasis",
+       5
+      ],
+      [
+       24554,
+       "Ġbattles",
+       3
+      ],
+      [
+       98823,
+       "ĠBlanco",
+       3
+      ],
+      [
+       10751,
+       "ĠEnc",
+       3
+      ],
+      [
+       44254,
+       "ĠHunting",
+       3
+      ],
+      [
+       14909,
+       "shire",
+       3
+      ],
+      [
+       20325,
+       "Ġports",
+       2
+      ],
+      [
+       51740,
+       "Ġseas",
+       2
+      ],
+      [
+       17675,
+       "ships",
+       2
+      ],
+      [
+       29403,
+       "Ġsail",
+       2
+      ]
+     ],
+     "16384": [
+      [
+       56133,
+       "ĠAlexandria",
+       9
+      ],
+      [
+       88989,
+       "Ġevacuate",
+       8
+      ],
+      [
+       27600,
+       "uez",
+       8
+      ],
+      [
+       56357,
+       "ĠConfederate",
+       7
+      ],
+      [
+       75524,
+       "Ġcruiser",
+       7
+      ],
+      [
+       32762,
+       "Ġmeditation",
+       7
+      ],
+      [
+       98823,
+       "ĠBlanco",
+       3
+      ],
+      [
+       10751,
+       "ĠEnc",
+       3
+      ],
+      [
+       44254,
+       "ĠHunting",
+       3
+      ],
+      [
+       51740,
+       "Ġseas",
+       2
+      ],
+      [
+       78001,
+       "Ġdepended",
+       2
+      ],
+      [
+       76137,
+       "Ġblockade",
+       2
+      ],
+      [
+       19936,
+       "mir",
+       2
+      ],
+      [
+       16789,
+       "chr",
+       2
+      ],
+      [
+       75235,
+       "-gun",
+       2
+      ],
+      [
+       60217,
+       "Ġknots",
+       2
+      ],
+      [
+       32489,
+       "ĠEgyptian",
+       1
+      ],
+      [
+       16755,
+       "atto",
+       1
+      ],
+      [
+       47861,
+       "ĠMerr",
+       1
+      ],
+      [
+       28476,
+       "ĠNap",
+       1
+      ]
+     ],
+     "32768": [
+      [
+       88989,
+       "Ġevacuate",
+       8
+      ],
+      [
+       75524,
+       "Ġcruiser",
+       7
+      ],
+      [
+       98823,
+       "ĠBlanco",
+       3
+      ],
+      [
+       44254,
+       "ĠHunting",
+       3
+      ],
+      [
+       75235,
+       "-gun",
+       2
+      ]
+     ],
+     "65536": []
+    },
+    "kd3": {
+     "8192": {
+      "match_rate": 0.75,
+      "gamma1_tokens_per_iter": 1.7534246575342465,
+      "gamma2_tokens_per_iter": 2.316742081447964,
+      "gamma4_tokens_per_iter": 2.9257142857142857
+     },
+     "16384": {
+      "match_rate": 0.796875,
+      "gamma1_tokens_per_iter": 1.8123893805309734,
+      "gamma2_tokens_per_iter": 2.398126463700234,
+      "gamma4_tokens_per_iter": 3.0843373493975905
+     },
+     "32768": {
+      "match_rate": 0.837890625,
+      "gamma1_tokens_per_iter": 1.8351254480286738,
+      "gamma2_tokens_per_iter": 2.449760765550239,
+      "gamma4_tokens_per_iter": 3.4019933554817277
+     },
+     "65536": {
+      "match_rate": 0.8564453125,
+      "gamma1_tokens_per_iter": 1.8517179023508137,
+      "gamma2_tokens_per_iter": 2.5036674816625917,
+      "gamma4_tokens_per_iter": 3.5310344827586206
+     },
+     "151936": {
+      "match_rate": 0.8544921875,
+      "gamma1_tokens_per_iter": 1.845045045045045,
+      "gamma2_tokens_per_iter": 2.491484184914842,
+      "gamma4_tokens_per_iter": 3.506849315068493
+     }
+    },
+    "kd2": {
+     "8192": {
+      "match_rate": 0.451171875,
+      "gamma1_tokens_per_iter": 1.3969986357435198,
+      "gamma2_tokens_per_iter": 1.6384,
+      "gamma4_tokens_per_iter": 1.7534246575342465
+     },
+     "16384": {
+      "match_rate": 0.4658203125,
+      "gamma1_tokens_per_iter": 1.420249653259362,
+      "gamma2_tokens_per_iter": 1.6623376623376624,
+      "gamma4_tokens_per_iter": 1.78397212543554
+     },
+     "32768": {
+      "match_rate": 0.46875,
+      "gamma1_tokens_per_iter": 1.426183844011142,
+      "gamma2_tokens_per_iter": 1.6623376623376624,
+      "gamma4_tokens_per_iter": 1.7902097902097902
+     },
+     "65536": {
+      "match_rate": 0.4755859375,
+      "gamma1_tokens_per_iter": 1.426183844011142,
+      "gamma2_tokens_per_iter": 1.665040650406504,
+      "gamma4_tokens_per_iter": 1.7996485061511422
+     },
+     "151936": {
+      "match_rate": 0.4736328125,
+      "gamma1_tokens_per_iter": 1.4222222222222223,
+      "gamma2_tokens_per_iter": 1.659643435980551,
+      "gamma4_tokens_per_iter": 1.7933450087565674
+     }
+    },
+    "kd1": {
+     "8192": {
+      "match_rate": 0.0009765625,
+      "gamma1_tokens_per_iter": 1.0009775171065494,
+      "gamma2_tokens_per_iter": 1.0009775171065494,
+      "gamma4_tokens_per_iter": 1.0009775171065494
+     },
+     "16384": {
+      "match_rate": 0.0009765625,
+      "gamma1_tokens_per_iter": 1.0009775171065494,
+      "gamma2_tokens_per_iter": 1.0009775171065494,
+      "gamma4_tokens_per_iter": 1.0009775171065494
+     },
+     "32768": {
+      "match_rate": 0.0009765625,
+      "gamma1_tokens_per_iter": 1.0009775171065494,
+      "gamma2_tokens_per_iter": 1.0009775171065494,
+      "gamma4_tokens_per_iter": 1.0009775171065494
+     },
+     "65536": {
+      "match_rate": 0.0,
+      "gamma1_tokens_per_iter": 1.0,
+      "gamma2_tokens_per_iter": 1.0,
+      "gamma4_tokens_per_iter": 1.0
+     },
+     "151936": {
+      "match_rate": 0.0,
+      "gamma1_tokens_per_iter": 1.0,
+      "gamma2_tokens_per_iter": 1.0,
+      "gamma4_tokens_per_iter": 1.0
+     }
+    }
+   }
+  },
+  "note": "teacher-forced draft on the target greedy path; path from NestModel ARDecoder (CUDA graph, M=1), draft logits from one M=len forward (bf16 near-tie flips possible)",
+  "wall_s": 159.095849275589,
+  "peak_mem_gib": 1.358658790588379
+ },
+ "notes": ""
+}

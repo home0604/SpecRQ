@@ -9,6 +9,9 @@ Each linear keeps its own codebooks (so q/k/v and gate/up are not fused). Option
 {k_d: (codebooks [k_d, 256, 8], scales [N])} can be installed per linear (DbD src/draft.py state-dict format).
 Hadamard input rotation (DbD rotation_signs / hadamard_block_size) uses the nestkern block FWHT kernel.
 embed / norms / lm_head stay bf16 (lm_head = embed when tied).
+FR-Spec draft vocab (set_draft_vocab): a contiguous [V_d, H] bf16 copy of the lm_head rows of the V_d most frequent
+tokens; forward(..., vd=V_d) returns logits over that subset (column j = token dvocab[V_d][0][j]); target / verify
+use vd=None (full lm_head). The copy is extra memory (V_d * H * 2 bytes; Llama-3.1-8B V_d=32k: 0.27 GB).
 
 Forward is written for static shapes so decode steps can be captured in CUDA graphs: the KV cache is a static
 [n_layers, H_kv, T_max, D] tensor pair, the write positions and attention mask come from a device `pos` tensor.
@@ -302,6 +305,23 @@ class NestModel:
                     n += 1
         return n
 
+    # ------------------------------------------------------------------ FR-Spec draft vocab
+    def set_draft_vocab(self, ids):
+        """ids: int64 [V_d] token ids (specrq.infer.frspec.load_subset). Gathers the lm_head rows into a contiguous
+        buffer. Returns V_d (the key for forward(vd=...))."""
+        if not hasattr(self, "dvocab"):
+            self.dvocab = {}
+        ids = ids.to(self.device, torch.long).contiguous()
+        self.dvocab[ids.numel()] = (ids, self.lm_head.index_select(0, ids).contiguous())
+        return ids.numel()
+
+    def draft_vocab_bytes(self):
+        return {vd: w.numel() * w.element_size() + ids.numel() * 8 for vd, (ids, w) in getattr(self, "dvocab", {}).items()}
+
+    def to_token_ids(self, idx, vd=None):
+        """Map argmax indices of forward(vd=...) logits back to token ids (device gather; graph-capturable)."""
+        return idx if vd is None else self.dvocab[vd][0][idx]
+
     # ------------------------------------------------------------------ cache
     def new_cache(self, T) -> Cache:
         T = (T + 15) // 16 * 16
@@ -328,8 +348,9 @@ class NestModel:
             self._rope_len = n
         return self._cos, self._sin
 
-    def forward(self, tokens, pos, cache: Cache, k=None, use_draft=False, last_only=False, capture=None):
-        """tokens [M] long (device); pos: 0-d long device tensor (position of tokens[0]); returns logits [M or 1, V]."""
+    def forward(self, tokens, pos, cache: Cache, k=None, use_draft=False, last_only=False, capture=None, vd=None):
+        """tokens [M] long (device); pos: 0-d long device tensor (position of tokens[0]); returns logits [M or 1, V]
+        (vd=None) or [M or 1, V_d] over the FR-Spec draft vocab (map argmax with to_token_ids)."""
         k = self.L if k is None else k
         M = tokens.shape[0]
         T = cache.k.shape[2]
@@ -400,12 +421,13 @@ class NestModel:
                 capture.append(h)
         if last_only:
             x = x[-1:]
-        return F.linear(x, self.lm_head)
+        return F.linear(x, self.lm_head if vd is None else self.dvocab[vd][1])
 
-    def prefill(self, tokens, cache, k=None, use_draft=False):
-        """Process the prompt (any length, chunks of 16 inside the linears); returns last-position logits [1, V]."""
+    def prefill(self, tokens, cache, k=None, use_draft=False, vd=None):
+        """Process the prompt (any length, chunks of 16 inside the linears); returns last-position logits [1, V]
+        ([1, V_d] with vd)."""
         pos = torch.zeros((), dtype=torch.long, device=self.device)
-        return self.forward(tokens, pos, cache, k, use_draft, last_only=True)
+        return self.forward(tokens, pos, cache, k, use_draft, last_only=True, vd=vd)
 
 
 def load_draft_file(path):

@@ -9,7 +9,10 @@ Measures (bf16, deterministic split-K, CUDA graphs):
 Model: per round time R(g, kd) = t_draft_round + t_verify + t_overhead (measured); speedup(tau) = tau * T_AR / R;
 required tau* = R / T_AR; with i.i.d. acceptance alpha, tau = (1 - alpha^(g+1)) / (1 - alpha) -> required alpha*.
 tau / alpha are ASSUMED variables in this model, not measurements.
-Usage: python -m specrq.infer.llama_cost --run NAME
+FR-Spec (--vds V_d ..., 0 = full vocab; v5): draft steps (AR k in {1,2,3}, M=2 catch-up, spec draft rounds) are
+measured per V_d with the partial-vocab lm_head (frequency table specrq.infer.frspec); target AR (k=5) and verify keep
+the full lm_head. Each spec row and model row carries `vd`.
+Usage: python -m specrq.infer.llama_cost --run NAME [--vds 0 16384 32768 65536]
 """
 from __future__ import annotations
 
@@ -67,16 +70,28 @@ def main(argv=None):
     ap.add_argument("--gammas", type=int, nargs="+", default=[1, 2, 4, 7])
     ap.add_argument("--kds", type=int, nargs="+", default=[1, 2, 3, 5])
     ap.add_argument("--repeats", type=int, default=3)
+    ap.add_argument("--vds", type=int, nargs="+", default=[0], help="FR-Spec draft vocab sizes (0 = full)")
+    ap.add_argument("--freq-dir", default=None)
     ap.add_argument("--run", default=None)
     a = ap.parse_args(argv)
     t0 = time.time()
     rss0 = rss_gb()
     m = NestModel.synthetic(a.model)
+    from specrq.infer.frspec import coverage, default_freq_dir, load_subset
+    freq_dir = a.freq_dir or default_freq_dir(m.cfg)
+    vd_cov = {}
+    for vd in a.vds:
+        if vd:
+            ids = load_subset(freq_dir, vd, m.lm_head.shape[0])
+            m.set_draft_vocab(ids)
+            vd_cov[vd] = coverage(freq_dir, ids)
+    VDS = [vd or None for vd in a.vds]
     torch.cuda.synchronize()
     load = {"load_s": time.time() - t0, "peak_rss_gb_before": rss0, "peak_rss_gb_after_load": rss_gb(),
             "gpu_mem_alloc_gb": torch.cuda.memory_allocated() / 1e9,
             "linear_bytes_per_token": {f"k{k}": m.linear_bytes(k) for k in range(1, 6)},
-            "lm_head_bytes": m.lm_head.numel() * 2}
+            "lm_head_bytes": m.lm_head.numel() * 2, "draft_vocab_bytes": m.draft_vocab_bytes(),
+            "draft_vocab_pileval_coverage": vd_cov}
     print("[load]", load, flush=True)
     V = m.cfg.vocab_size
     gen = torch.Generator(device="cuda").manual_seed(0)
@@ -85,14 +100,15 @@ def main(argv=None):
     T = Pmax + a.n_new + max(a.gammas) + 8
     prompts = {P: torch.randint(0, V, (P,), device="cuda", generator=gen) for P in a.prompts}
 
-    # AR step at k in {5, 1, 2, 3} and both prompt lengths
-    for k in (5, 1, 2, 3):
-        ar = ARDecoder(m, T, k=k)
+    # AR step at k in {5, 1, 2, 3} and both prompt lengths (k < 5 = draft step: per V_d; k = 5 full vocab only)
+    for k, vd in [(5, None)] + [(k, vd) for k in (1, 2, 3) for vd in VDS]:
+        ar = ARDecoder(m, T, k=k, vd=vd)
         ar.generate(prompts[a.prompts[0]], 8)
         for P in a.prompts:
             st = [ar.generate(prompts[P], a.n_new)[1] for _ in range(a.repeats)]
             step = [1e6 * s["t_decode_s"] / s["n_decode_tokens"] for s in st]
-            res["ar"].append({"k": k, "P": P, "step_us": statistics.median(step), "step_us_range": [min(step), max(step)],
+            res["ar"].append({"k": k, "vd": vd or V, "P": P, "step_us": statistics.median(step),
+                              "step_us_range": [min(step), max(step)],
                               "tokens_per_s": statistics.median(s["tokens_per_s"] for s in st)})
             if k == 5:
                 res["prefill"].append({"P": P, "k": 5, "prefill_s": statistics.median(s["t_prefill_s"] for s in st)})
@@ -105,25 +121,33 @@ def main(argv=None):
     m.prefill(prompts[a.prompts[0]], cache, 5)
     pos = torch.tensor(a.prompts[0], device="cuda")
     toks = torch.randint(0, V, (16,), device="cuda", generator=gen)
-    for k in (5, 3, 2, 1):
+    for k, vd in [(5, None)] + [(k, vd) for k in (3, 2, 1) for vd in VDS]:
         for M in ((1, 2, 3, 5, 8) if k == 5 else (1, 2)):
-            us = graph_us(lambda: m.forward(toks[:M], pos, cache, k, last_only=(M == 1 or k != 5)))
-            res["forward_M"].append({"k": k, "M": M, "P": a.prompts[0], "us": us})
+            us = graph_us(lambda: m.forward(toks[:M], pos, cache, k, last_only=(M == 1 or k != 5), vd=vd))
+            res["forward_M"].append({"k": k, "vd": vd or V, "M": M, "P": a.prompts[0], "us": us})
             print("[fwd]", res["forward_M"][-1], flush=True)
     del cache
     h = {M: torch.randn(M, m.cfg.hidden_size, device="cuda", dtype=m.dtype) for M in (1, 2, 3, 5, 8)}
     for M in h:
         res["lm_head_us"][f"M{M}"] = graph_us(lambda: F.linear(h[M], m.lm_head))
+    res["lm_head_sub_us"] = {}
+    for vd in VDS:
+        if vd:
+            w = m.dvocab[vd][1]
+            res["lm_head_sub_us"][str(vd)] = {f"M{M}": graph_us(lambda: m.to_token_ids(F.linear(h[M], w).argmax(-1), vd))
+                                              for M in (1, 2)}
+    res["lm_head_argmax_full_us"] = {f"M{M}": graph_us(lambda: F.linear(h[M], m.lm_head).argmax(-1)) for M in (1, 2)}
+    print("[lm_head_sub]", res["lm_head_sub_us"], res["lm_head_argmax_full_us"], flush=True)
     print("[lm_head]", res["lm_head_us"], flush=True)
 
     # spec rounds
     P = a.prompts[0]
     for g in a.gammas:
-        for kd in a.kds:
-            sd = SpecDecoder(m, T, g, kd)
+        for kd, vd in [(kd, vd) for kd in a.kds for vd in (VDS if kd != 5 else [None])]:
+            sd = SpecDecoder(m, T, g, kd, vd=vd)
             sd.generate(prompts[P], 8)
             st = [sd.generate(prompts[P], a.n_new)[1] for _ in range(a.repeats)]
-            r = {"gamma": g, "kd": kd, "P": P}
+            r = {"gamma": g, "kd": kd, "vd": vd or V, "P": P}
             for key in ("t_draft_round_ms", "t_verify_ms", "t_overhead_ms", "tokens_per_s", "t_prefill_s"):
                 r[key] = statistics.median(s[key] for s in st)
             r["tau"] = statistics.median(s["tau"] for s in st) if kd == 5 else None  # random-model acceptance: n/a
@@ -136,17 +160,17 @@ def main(argv=None):
 
     # model: required tau for kd < 5 (measured costs, assumed tau)
     T_ar = next(x["step_us"] for x in res["ar"] if x["k"] == 5 and x["P"] == P) / 1e3  # ms
-    fwd = {(x["k"], x["M"]): x["us"] / 1e3 for x in res["forward_M"]}
+    fwd = {(x["k"], x["vd"], x["M"]): x["us"] / 1e3 for x in res["forward_M"]}
     model = []
     for r in res["spec"]:
         if r["kd"] == 5:
             continue
-        g, kd = r["gamma"], r["kd"]
+        g, kd, vd = r["gamma"], r["kd"], r["vd"]
         R_meas = r["t_draft_round_ms"] + r["t_verify_ms"] + r["t_overhead_ms"]
         # catch-up bound: every round starts with an M=2 draft step instead of M=1
-        R_catch = R_meas + (fwd[(kd, 2)] - fwd[(kd, 1)])
+        R_catch = R_meas + (fwd[(kd, vd, 2)] - fwd[(kd, vd, 1)])
         tau_req = R_meas / T_ar
-        model.append({"gamma": g, "kd": kd, "T_ar_ms": T_ar, "round_ms": R_meas, "round_ms_catchup_every_round": R_catch,
+        model.append({"gamma": g, "kd": kd, "vd": vd, "T_ar_ms": T_ar, "round_ms": R_meas, "round_ms_catchup_every_round": R_catch,
                       "tau_required": tau_req, "tau_required_catchup": R_catch / T_ar,
                       "alpha_required_iid": req_alpha(tau_req, g), "alpha_required_iid_catchup": req_alpha(R_catch / T_ar, g),
                       "speedup_at_tau": {f"{t:.1f}": t * T_ar / R_meas for t in (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
@@ -162,7 +186,7 @@ def main(argv=None):
             "setting": "SYNTHETIC checkpoint: real Llama-3.1-8B-Instruct embed/norm/lm_head, random C1 linears "
                        "(L=5, 8 bit, d=8) + random Hadamard signs (B=256); timing only, no quality",
             "model": a.model, "prompts": a.prompts, "n_new": a.n_new, "gammas": a.gammas, "kds": a.kds,
-            "repeats": a.repeats, "dtype": "bf16", "deterministic_splitk": True, "decode_attn": "fp32 compiled",
+            "repeats": a.repeats, "vds": a.vds, "cuda_visible_devices": __import__("os").environ.get("CUDA_VISIBLE_DEVICES"), "freq_dir": freq_dir, "dtype": "bf16", "deterministic_splitk": True, "decode_attn": "fp32 compiled",
             "T_max": T, "tau_note": "tau/alpha in `model` are assumed variables; only kd=5 tau is measured (sanity)"},
             metrics=res, model_dir=a.model))
 

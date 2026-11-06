@@ -15,6 +15,9 @@ Spec : per round, with n = committed KV length (target cache valid for [0, n)), 
 Timing (Notion 03): decode wall = perf_counter over the decode loop (sync at end); draft / verify = CUDA-event time of
 the draft / verify graph replays; overhead = wall - draft - verify (host acceptance, buffer updates, launch gaps).
 Prefill is timed separately (eager forward, chunked mma).
+FR-Spec (vd = V_d): every draft step uses the partial-vocab lm_head (NestModel.set_draft_vocab) and maps its argmax
+back to token ids on device inside the graph; verify always uses the full lm_head (exact greedy). ARDecoder(vd=...)
+exists only to time a draft-style step (its output is the subset-restricted greedy path, not the target's).
 """
 from __future__ import annotations
 
@@ -41,8 +44,8 @@ class _Graph:
 
 
 class ARDecoder:
-    def __init__(self, model, T_max, k=None, use_draft=False, n_max=4096):
-        self.m, self.k, self.use_draft = model, k, use_draft
+    def __init__(self, model, T_max, k=None, use_draft=False, n_max=4096, vd=None):
+        self.m, self.k, self.use_draft, self.vd = model, k, use_draft, vd
         self.cache = model.new_cache(T_max)
         dev = model.device
         self.tok = torch.zeros(1, dtype=torch.long, device=dev)
@@ -52,8 +55,8 @@ class ARDecoder:
         self.graph = _Graph(self._step)
 
     def _step(self):
-        logits = self.m.forward(self.tok, self.pos, self.cache, self.k, self.use_draft, last_only=True)
-        nxt = logits.argmax(-1)
+        logits = self.m.forward(self.tok, self.pos, self.cache, self.k, self.use_draft, last_only=True, vd=self.vd)
+        nxt = self.m.to_token_ids(logits.argmax(-1), self.vd)
         self.out.index_copy_(0, self.idx.view(1), nxt)
         self.tok.copy_(nxt)
         self.pos.add_(1)
@@ -64,8 +67,8 @@ class ARDecoder:
         m = self.m
         _sync()
         t0 = time.perf_counter()
-        logits = m.prefill(prompt, self.cache, self.k, self.use_draft)
-        first = logits.argmax(-1)
+        logits = m.prefill(prompt, self.cache, self.k, self.use_draft, vd=self.vd)
+        first = m.to_token_ids(logits.argmax(-1), self.vd)
         _sync()
         t_prefill = time.perf_counter() - t0
         self.tok.copy_(first)
@@ -83,8 +86,8 @@ class ARDecoder:
 
 
 class SpecDecoder:
-    def __init__(self, model, T_max, gamma, k_draft, k_target=None, use_draft=False):
-        self.m, self.g, self.kd, self.kt, self.use_draft = model, gamma, k_draft, k_target, use_draft
+    def __init__(self, model, T_max, gamma, k_draft, k_target=None, use_draft=False, vd=None):
+        self.m, self.g, self.kd, self.kt, self.use_draft, self.vd = model, gamma, k_draft, k_target, use_draft, vd
         self.tc, self.dc = model.new_cache(T_max), model.new_cache(T_max)
         dev = model.device
         self.n = torch.zeros((), dtype=torch.long, device=dev)       # committed length (pos of cur)
@@ -100,10 +103,11 @@ class SpecDecoder:
         m = self.m
         for j in range(self.g):
             if j == 0 and catch_up:
-                logits = m.forward(self.cbuf, self.n - 1, self.dc, self.kd, self.use_draft, last_only=True)
+                logits = m.forward(self.cbuf, self.n - 1, self.dc, self.kd, self.use_draft, last_only=True, vd=self.vd)
             else:
-                logits = m.forward(self.buf[j:j + 1], self.n + j, self.dc, self.kd, self.use_draft, last_only=True)
-            self.buf[j + 1:j + 2].copy_(logits.argmax(-1))
+                logits = m.forward(self.buf[j:j + 1], self.n + j, self.dc, self.kd, self.use_draft, last_only=True,
+                                   vd=self.vd)
+            self.buf[j + 1:j + 2].copy_(m.to_token_ids(logits.argmax(-1), self.vd))
 
     def _verify(self):
         logits = self.m.forward(self.buf, self.n, self.tc, self.kt, False)

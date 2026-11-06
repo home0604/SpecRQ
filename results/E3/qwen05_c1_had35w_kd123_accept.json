@@ -1,0 +1,312 @@
+{
+ "exp": "E3",
+ "run": "qwen05_c1_had35w_kd123_accept",
+ "time": "2026-11-06T10:56:23",
+ "commit": "0cc1e79",
+ "dirty_files": 12,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "ckpt": "/data/lsh/ckpts/weightvq/qwen05/c1_had35w_wt2_fp64",
+  "setting": "C1 d=8 K=256 M=5, Hadamard, wikitext2 1024x4096 calib, accum fp64, alpha=0 prefixes skipped",
+  "codebook_weights": [
+   0.0,
+   0.0,
+   0.5,
+   0.0,
+   0.5
+  ],
+  "draft": "A = target-copy codebooks (bf16); B = draft-only codebooks+scales TV-trained (pile_val_heldout 1024x512, 300 steps, batch 4, lr 1e-4)",
+  "eval": {
+   "tool": "experiments/06_accept/draft_target_eval.py",
+   "kt": 5,
+   "windows": "40 x 512 wikitext2 test + 40 x 512 c4 val",
+   "greedy": "8 chat prompts + 8 wikitext2 prompts, 128 new tokens; tokens/iter simulated from target greedy path",
+   "ppl": "specrq/dbd/main.py perplexity_eval @4096 (and @512 for trained ckpts)"
+  },
+  "scripts": [
+   "experiments/07_kd12/run_kd12.sh",
+   "experiments/06_accept/run_q_suite.sh",
+   "experiments/05_qwen_full/run_full.sh",
+   "experiments/07_kd12/save_kd12.py"
+  ],
+  "gpu": "0",
+  "logs": [
+   "/data/lsh/logs/e3_kd12_35w.log"
+  ],
+  "tmux_job": "sr-e3_kd12_35w"
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k5": 13.347,
+   "wikitext2_k4": 15.4861,
+   "wikitext2_k3": 21.8856,
+   "wikitext2_k2": 961.5811,
+   "wikitext2_k1": 230999.5469,
+   "c4_k5": 17.9018,
+   "c4_k4": 20.0384,
+   "c4_k3": 27.8698,
+   "c4_k2": 687.0518,
+   "c4_k1": 210106.7812
+  },
+  "ppl_512": {},
+  "kd": {
+   "1": {
+    "dir": "/data/lsh/results_accept/qwen05_c1_had35w_kd1",
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.9759127497673035,
+      "accept_prob_1mTV": 0.024087250232696533,
+      "top1_agree": 0.005821917671710253,
+      "kl_t_d": 9.44517993927002,
+      "kl_d_t": 10.893682479858398,
+      "ppl_target": 18.572023391723633,
+      "ppl_draft": 208501.71875,
+      "ppl_fp16": 18.12192153930664,
+      "kl_fp16_target": 0.02974582090973854,
+      "top1_fp16_target": 0.9113013744354248
+     },
+     "c4": {
+      "tv_mean": 0.9803681373596191,
+      "accept_prob_1mTV": 0.01963186264038086,
+      "top1_agree": 0.0017612524097785354,
+      "kl_t_d": 9.648293495178223,
+      "kl_d_t": 11.421457290649414,
+      "ppl_target": 20.717636108398438,
+      "ppl_draft": 300141.40625,
+      "ppl_fp16": 20.124181747436523,
+      "kl_fp16_target": 0.033477868884801865,
+      "top1_fp16_target": 0.8937866687774658
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.0009765625,
+       "g1_tok_per_iter": 1.0012706480304956,
+       "g2_tok_per_iter": 1.0012706480304956,
+       "g4_tok_per_iter": 1.0012706480304956
+      },
+      "wikitext2": {
+       "match_rate": 0.001953125,
+       "g1_tok_per_iter": 1.0019569471624266,
+       "g2_tok_per_iter": 1.0019569471624266,
+       "g4_tok_per_iter": 1.0019569471624266
+      },
+      "target_consistency": 0.9811002612113953
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_had35w_kd1/eval/A_bf16.json"
+    },
+    "B_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.7763056755065918,
+      "accept_prob_1mTV": 0.2236943244934082,
+      "top1_agree": 0.18419764935970306,
+      "kl_t_d": 5.414374828338623,
+      "kl_d_t": 4.069019317626953,
+      "ppl_target": 18.572023391723633,
+      "ppl_draft": 4455.5126953125
+     },
+     "c4": {
+      "tv_mean": 0.7486646175384521,
+      "accept_prob_1mTV": 0.25133538246154785,
+      "top1_agree": 0.2064579278230667,
+      "kl_t_d": 4.619906425476074,
+      "kl_d_t": 3.6928281784057617,
+      "ppl_target": 20.717636108398438,
+      "ppl_draft": 2014.0252685546875
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.1038329221491228,
+       "g1_tok_per_iter": 1.1082981715893108,
+       "g2_tok_per_iter": 1.1177304964539008,
+       "g4_tok_per_iter": 1.1177304964539008
+      },
+      "wikitext2": {
+       "match_rate": 0.2421875,
+       "g1_tok_per_iter": 1.2720496894409938,
+       "g2_tok_per_iter": 1.3145057766367136,
+       "g4_tok_per_iter": 1.3178893178893178
+      },
+      "target_consistency": 0.9811002612113953
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_had35w_kd1/eval/B_bf16.json"
+    }
+   },
+   "2": {
+    "dir": "/data/lsh/results_accept/qwen05_c1_had35w_kd2",
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.7892191410064697,
+      "accept_prob_1mTV": 0.21078085899353027,
+      "top1_agree": 0.15552838146686554,
+      "kl_t_d": 3.721163034439087,
+      "kl_d_t": 4.1843132972717285,
+      "ppl_target": 18.572023391723633,
+      "ppl_draft": 751.1797485351562,
+      "ppl_fp16": 18.12192153930664,
+      "kl_fp16_target": 0.02974582090973854,
+      "top1_fp16_target": 0.9113013744354248
+     },
+     "c4": {
+      "tv_mean": 0.7708383202552795,
+      "accept_prob_1mTV": 0.22916167974472046,
+      "top1_agree": 0.17568492889404297,
+      "kl_t_d": 3.5157687664031982,
+      "kl_d_t": 3.9699013233184814,
+      "ppl_target": 20.717636108398438,
+      "ppl_draft": 659.1829833984375,
+      "ppl_fp16": 20.124181747436523,
+      "kl_fp16_target": 0.033477868884801865,
+      "top1_fp16_target": 0.8937866687774658
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.12855057565789474,
+       "g1_tok_per_iter": 1.152046783625731,
+       "g2_tok_per_iter": 1.174366616989568,
+       "g4_tok_per_iter": 1.1796407185628743
+      },
+      "wikitext2": {
+       "match_rate": 0.494140625,
+       "g1_tok_per_iter": 1.4422535211267606,
+       "g2_tok_per_iter": 1.6869851729818781,
+       "g4_tok_per_iter": 1.855072463768116
+      },
+      "target_consistency": 0.9811002612113953
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_had35w_kd2/eval/A_bf16.json"
+    },
+    "B_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.42530491948127747,
+      "accept_prob_1mTV": 0.5746950805187225,
+      "top1_agree": 0.5295988321304321,
+      "kl_t_d": 1.0796374082565308,
+      "kl_d_t": 1.1416895389556885,
+      "ppl_target": 18.572023391723633,
+      "ppl_draft": 53.88859939575195
+     },
+     "c4": {
+      "tv_mean": 0.39007681608200073,
+      "accept_prob_1mTV": 0.6099231839179993,
+      "top1_agree": 0.5637475252151489,
+      "kl_t_d": 0.8847499489784241,
+      "kl_d_t": 0.8968062996864319,
+      "ppl_target": 20.717636108398438,
+      "ppl_draft": 47.6358642578125
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.5598800712719298,
+       "g1_tok_per_iter": 1.5983772819472617,
+       "g2_tok_per_iter": 1.9266503667481663,
+       "g4_tok_per_iter": 2.264367816091954
+      },
+      "wikitext2": {
+       "match_rate": 0.8056640625,
+       "g1_tok_per_iter": 1.7624784853700517,
+       "g2_tok_per_iter": 2.34324942791762,
+       "g4_tok_per_iter": 3.1604938271604937
+      },
+      "target_consistency": 0.9811002612113953
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_had35w_kd2/eval/B_bf16.json"
+    }
+   },
+   "3": {
+    "dir": "/data/lsh/results_accept/qwen05_c1_had35w",
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.3107781708240509,
+      "accept_prob_1mTV": 0.6892218291759491,
+      "top1_agree": 0.6517612338066101,
+      "kl_t_d": 0.4981188178062439,
+      "kl_d_t": 0.545145571231842,
+      "ppl_target": 18.572023391723633,
+      "ppl_draft": 29.641902923583984,
+      "ppl_fp16": 18.12192153930664,
+      "kl_fp16_target": 0.02974582090973854,
+      "top1_fp16_target": 0.9113013744354248
+     },
+     "c4": {
+      "tv_mean": 0.3040350079536438,
+      "accept_prob_1mTV": 0.6959649920463562,
+      "top1_agree": 0.6431506872177124,
+      "kl_t_d": 0.4490484595298767,
+      "kl_d_t": 0.48420238494873047,
+      "ppl_target": 20.717636108398438,
+      "ppl_draft": 31.261442184448242,
+      "ppl_fp16": 20.124181747436523,
+      "kl_fp16_target": 0.033477868884801865,
+      "top1_fp16_target": 0.8937866687774658
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.6606661184210527,
+       "g1_tok_per_iter": 1.676595744680851,
+       "g2_tok_per_iter": 2.1949860724233985,
+       "g4_tok_per_iter": 2.6986301369863015
+      },
+      "wikitext2": {
+       "match_rate": 0.8603515625,
+       "g1_tok_per_iter": 1.845045045045045,
+       "g2_tok_per_iter": 2.5098039215686274,
+       "g4_tok_per_iter": 3.56794425087108
+      },
+      "target_consistency": 0.9811002612113953
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_had35w/eval/A_bf16.json"
+    },
+    "B_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.2586089074611664,
+      "accept_prob_1mTV": 0.7413910925388336,
+      "top1_agree": 0.7020058631896973,
+      "kl_t_d": 0.36970487236976624,
+      "kl_d_t": 0.3961452543735504,
+      "ppl_target": 18.572023391723633,
+      "ppl_draft": 25.386133193969727
+     },
+     "c4": {
+      "tv_mean": 0.23219101130962372,
+      "accept_prob_1mTV": 0.7678089886903763,
+      "top1_agree": 0.728277862071991,
+      "kl_t_d": 0.2844812273979187,
+      "kl_d_t": 0.29820626974105835,
+      "ppl_target": 20.717636108398438,
+      "ppl_draft": 26.30571174621582
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.7042317708333333,
+       "g1_tok_per_iter": 1.720524017467249,
+       "g2_tok_per_iter": 2.245014245014245,
+       "g4_tok_per_iter": 2.8970588235294117
+      },
+      "wikitext2": {
+       "match_rate": 0.8740234375,
+       "g1_tok_per_iter": 1.8517179023508137,
+       "g2_tok_per_iter": 2.585858585858586,
+       "g4_tok_per_iter": 3.710144927536232
+      },
+      "target_consistency": 0.9811002612113953
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_had35w/eval/B_bf16.json"
+    }
+   }
+  }
+ },
+ "notes": "kd=1,2 run here (job e3_kd12_35w); kd=3 rows are the existing q-suite A/B evals of results/E3/qwen05_c1_had35w_qsuite_kd3.json (same protocol). ppl_4096 from main.py --load @4096. k=1,2 not in the 35W training objective."
+}
