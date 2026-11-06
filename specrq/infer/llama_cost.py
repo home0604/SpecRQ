@@ -186,7 +186,7 @@ def main(argv=None):
             "setting": "SYNTHETIC checkpoint: real Llama-3.1-8B-Instruct embed/norm/lm_head, random C1 linears "
                        "(L=5, 8 bit, d=8) + random Hadamard signs (B=256); timing only, no quality",
             "model": a.model, "prompts": a.prompts, "n_new": a.n_new, "gammas": a.gammas, "kds": a.kds,
-            "repeats": a.repeats, "vds": a.vds, "cuda_visible_devices": __import__("os").environ.get("CUDA_VISIBLE_DEVICES"), "freq_dir": freq_dir, "dtype": "bf16", "deterministic_splitk": True, "decode_attn": "fp32 compiled",
+            "repeats": a.repeats, "vds": a.vds, "chat_forced_draft_vocab": True, "eos_stop": False, "cuda_visible_devices": __import__("os").environ.get("CUDA_VISIBLE_DEVICES"), "freq_dir": freq_dir, "dtype": "bf16", "deterministic_splitk": True, "decode_attn": "fp32 compiled",
             "T_max": T, "tau_note": "tau/alpha in `model` are assumed variables; only kd=5 tau is measured (sanity)"},
             metrics=res, model_dir=a.model))
 

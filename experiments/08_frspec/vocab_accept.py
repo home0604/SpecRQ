@@ -180,7 +180,7 @@ def main():
     cfg = {k: res.pop(k) for k in ("model", "ckpt", "freq_dir", "kt", "kds", "vds", "V", "seqlen")}
     cfg.update({"setting": "FR-Spec draft vocab: greedy draft(kd, V_d) vs target(kt) agreement, NestModel, bf16",
                 "n_windows": a.n_windows, "gen_tokens": a.gen_tokens, "n_corpus_prompts": a.n_corpus_prompts,
-                "instruct_prompts": INSTRUCT_PROMPTS})
+                "instruct_prompts": INSTRUCT_PROMPTS, "chat_forced_draft_vocab": True})
     print("saved", save_result("E4", a.run, config=cfg, metrics=res, model_dir=a.model))
 
 

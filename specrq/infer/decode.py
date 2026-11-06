@@ -18,6 +18,13 @@ Prefill is timed separately (eager forward, chunked mma).
 FR-Spec (vd = V_d): every draft step uses the partial-vocab lm_head (NestModel.set_draft_vocab) and maps its argmax
 back to token ids on device inside the graph; verify always uses the full lm_head (exact greedy). ARDecoder(vd=...)
 exists only to time a draft-style step (its output is the subset-restricted greedy path, not the target's).
+EOS stop (eos = iterable of stop ids, e.g. generation_config eos; None = off = previous behaviour): a request ends at
+the first confirmed stop token (kept in the output) or at n_new confirmed tokens (first token from prefill included).
+  AR  : graph replays are pipelined with a 1-step-delayed host check (step j is enqueued before the token of step j-1
+        is inspected via a pinned async copy + event), so the GPU never idles; at most one wasted step after EOS,
+        and it is inside the timed wall.
+  Spec: the accepted tokens d_1..d_a, v_a of a round are cut at the first stop token; output is also cut at n_new.
+  tokens_per_s = confirmed decode tokens (after the cut, excluding the prefill token) / decode wall time.
 """
 from __future__ import annotations
 
@@ -44,8 +51,11 @@ class _Graph:
 
 
 class ARDecoder:
-    def __init__(self, model, T_max, k=None, use_draft=False, n_max=4096, vd=None):
+    def __init__(self, model, T_max, k=None, use_draft=False, n_max=4096, vd=None, eos=None):
         self.m, self.k, self.use_draft, self.vd = model, k, use_draft, vd
+        self.eos = frozenset(int(e) for e in eos) if eos else None
+        self.hbuf = torch.zeros(n_max, dtype=torch.long, pin_memory=True) if self.eos else None
+        self.hev = [torch.cuda.Event() for _ in range(n_max)] if self.eos else None
         self.cache = model.new_cache(T_max)
         dev = model.device
         self.tok = torch.zeros(1, dtype=torch.long, device=dev)
@@ -75,19 +85,44 @@ class ARDecoder:
         self.pos.fill_(prompt.numel())
         self.idx.zero_()
         _sync()
+        if self.eos is None:
+            t1 = time.perf_counter()
+            for _ in range(n_new - 1):
+                self.graph.replay()
+            _sync()
+            t_dec = time.perf_counter() - t1
+            toks = [int(first)] + self.out[: n_new - 1].tolist()
+            return toks, {"t_prefill_s": t_prefill, "t_decode_s": t_dec, "n_decode_tokens": n_new - 1,
+                          "tokens_per_s": (n_new - 1) / t_dec}
+        n_dec = n_new - 1  # confirmed decode tokens
+        first_i = int(first)
         t1 = time.perf_counter()
-        for _ in range(n_new - 1):
-            self.graph.replay()
+        if first_i in self.eos:
+            n_dec = 0
+        else:
+            hb, hev = self.hbuf, self.hev
+            for j in range(n_new - 1):
+                self.graph.replay()
+                hb[j:j + 1].copy_(self.tok, non_blocking=True)
+                hev[j].record()
+                if j >= 1:
+                    hev[j - 1].synchronize()
+                    if int(hb[j - 1]) in self.eos:
+                        n_dec = j  # tokens 0..j-1
+                        break
+            # no break: the last token (index n_new - 2) is the n_new-th confirmed token either way
         _sync()
         t_dec = time.perf_counter() - t1
-        toks = [int(first)] + self.out[: n_new - 1].tolist()
-        return toks, {"t_prefill_s": t_prefill, "t_decode_s": t_dec, "n_decode_tokens": n_new - 1,
-                      "tokens_per_s": (n_new - 1) / t_dec}
+        toks = [first_i] + self.out[:n_dec].tolist()
+        return toks, {"t_prefill_s": t_prefill, "t_decode_s": t_dec, "n_decode_tokens": n_dec,
+                      "tokens_per_s": n_dec / t_dec if t_dec > 0 and n_dec else 0.0,
+                      "eos_hit": toks[-1] in self.eos}
 
 
 class SpecDecoder:
-    def __init__(self, model, T_max, gamma, k_draft, k_target=None, use_draft=False, vd=None):
+    def __init__(self, model, T_max, gamma, k_draft, k_target=None, use_draft=False, vd=None, eos=None):
         self.m, self.g, self.kd, self.kt, self.use_draft, self.vd = model, gamma, k_draft, k_target, use_draft, vd
+        self.eos = frozenset(int(e) for e in eos) if eos else None
         self.tc, self.dc = model.new_cache(T_max), model.new_cache(T_max)
         dev = model.device
         self.n = torch.zeros((), dtype=torch.long, device=dev)       # committed length (pos of cur)
@@ -128,9 +163,10 @@ class SpecDecoder:
         ev = [(torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True),
                torch.cuda.Event(enable_timing=True)) for _ in range(n_new + 1)]
         accepted, rounds = [], 0
+        stop = self.eos is not None and first in self.eos
         _sync()
         t1 = time.perf_counter()
-        while len(out) < n_new:
+        while len(out) < n_new and not stop:
             self.n.fill_(n)
             self.buf[0].fill_(cur)
             if catch_up:
@@ -147,7 +183,15 @@ class SpecDecoder:
             a = 0
             while a < g and d[a] == v[a]:
                 a += 1
-            out.extend(d[:a] + [v[a]])
+            new = d[:a] + [v[a]]
+            if self.eos is not None:
+                cut = next((i for i, t in enumerate(new) if t in self.eos), None)
+                room = n_new - len(out)
+                if cut is not None and cut < room:
+                    new, stop = new[:cut + 1], True
+                elif len(new) > room:
+                    new = new[:room]
+            out.extend(new)
             accepted.append(a)
             catch_up, prev_last = a == g, d[g - 1]
             n += a + 1
@@ -158,7 +202,9 @@ class SpecDecoder:
         t_draft = sum(ev[i][0].elapsed_time(ev[i][1]) for i in range(rounds)) / 1e3
         t_ver = sum(ev[i][1].elapsed_time(ev[i][2]) for i in range(rounds)) / 1e3
         n_tok = len(out) - 1  # tokens confirmed during decode (the first comes from prefill)
-        return out[:n_new], {
+        rounds = max(rounds, 1)
+        extra = {} if self.eos is None else {"eos_hit": out[-1] in self.eos}
+        return out[:n_new], {**extra,
             "t_prefill_s": t_prefill, "t_decode_s": t_dec, "t_draft_s": t_draft, "t_verify_s": t_ver,
             "t_overhead_s": t_dec - t_draft - t_ver, "rounds": rounds, "n_decode_tokens": n_tok,
             "tokens_per_s": n_tok / t_dec, "tau": n_tok / rounds, "accept_rate": sum(accepted) / (g * rounds),
