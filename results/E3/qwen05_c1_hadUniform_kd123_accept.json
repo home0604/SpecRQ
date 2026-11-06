@@ -1,0 +1,323 @@
+{
+ "exp": "E3",
+ "run": "qwen05_c1_hadUniform_kd123_accept",
+ "time": "2026-11-06T16:00:20",
+ "commit": "f95e6cc",
+ "dirty_files": 0,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "ckpt": "/data/lsh/ckpts/weightvq/qwen05/c1_had_uniform_wt2_fp64",
+  "setting": "C1 d=8 K=256 M=5, Hadamard, wikitext2 1024x4096 calib, accum fp64, alpha=0 prefixes skipped",
+  "codebook_weights": [
+   0.2,
+   0.2,
+   0.2,
+   0.2,
+   0.2
+  ],
+  "draft": "A = target-copy codebooks (bf16); B = draft-only codebooks+scales TV-trained (pile_val_heldout 1024x512, 300 steps, batch 4, lr 1e-4)",
+  "eval": {
+   "tool": "experiments/06_accept/draft_target_eval.py",
+   "kt": 5,
+   "windows": "40 x 512 wikitext2 test + 40 x 512 c4 val",
+   "greedy": "8 chat prompts + 8 wikitext2 prompts, 128 new tokens; tokens/iter simulated from target greedy path",
+   "ppl": "specrq/dbd/main.py perplexity_eval @4096 (and @512 for trained ckpts)"
+  },
+  "scripts": [
+   "experiments/07_kd12/run_kd12.sh",
+   "experiments/06_accept/run_q_suite.sh",
+   "experiments/05_qwen_full/run_full.sh",
+   "experiments/07_kd12/save_kd12.py"
+  ],
+  "gpu": "2",
+  "logs": [
+   "/data/lsh/logs/e3_qwen05_uniform_c1.log"
+  ],
+  "tmux_job": "sr-e3_qwen05_uniform_c1"
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k5": 13.5209,
+   "wikitext2_k4": 16.3268,
+   "wikitext2_k3": 27.3072,
+   "wikitext2_k2": 825.3055,
+   "wikitext2_k1": 141919.2188,
+   "c4_k5": 18.2115,
+   "c4_k4": 20.8793,
+   "c4_k3": 31.6733,
+   "c4_k2": 656.0698,
+   "c4_k1": 105880.7109
+  },
+  "ppl_512": {
+   "wikitext2_k5": 19.5004,
+   "wikitext2_k4": 23.7201,
+   "wikitext2_k3": 37.8342,
+   "wikitext2_k2": 673.3602,
+   "wikitext2_k1": 146377.2969,
+   "c4_k5": 23.6629,
+   "c4_k4": 27.0157,
+   "c4_k3": 39.8061,
+   "c4_k2": 566.8461,
+   "c4_k1": 139500.75
+  },
+  "kd": {
+   "1": {
+    "dir": "/data/lsh/results_accept/qwen05_c1_hadUniform_kd1",
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.9703309535980225,
+      "accept_prob_1mTV": 0.02966904640197754,
+      "top1_agree": 0.005626223050057888,
+      "kl_t_d": 8.693840980529785,
+      "kl_d_t": 9.765523910522461,
+      "ppl_target": 18.695871353149414,
+      "ppl_draft": 102618.9921875,
+      "ppl_fp16": 18.12192153930664,
+      "kl_fp16_target": 0.0466005802154541,
+      "top1_fp16_target": 0.8842465877532959
+     },
+     "c4": {
+      "tv_mean": 0.9695624113082886,
+      "accept_prob_1mTV": 0.030437588691711426,
+      "top1_agree": 0.02040117420256138,
+      "kl_t_d": 8.781624794006348,
+      "kl_d_t": 10.408320426940918,
+      "ppl_target": 21.06224250793457,
+      "ppl_draft": 123070.9375,
+      "ppl_fp16": 20.124181747436523,
+      "kl_fp16_target": 0.05399157851934433,
+      "top1_fp16_target": 0.8642857074737549
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.018444475304087046,
+       "g1_tok_per_iter": 1.0170523751522533,
+       "g2_tok_per_iter": 1.0195360195360195,
+       "g4_tok_per_iter": 1.0195360195360195
+      },
+      "wikitext2": {
+       "match_rate": 0.0166015625,
+       "g1_tok_per_iter": 1.0168818272095332,
+       "g2_tok_per_iter": 1.0168818272095332,
+       "g4_tok_per_iter": 1.0168818272095332
+      },
+      "target_consistency": 0.9912524446845055
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_hadUniform_kd1/eval/A_bf16.json"
+    },
+    "B_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.7655261754989624,
+      "accept_prob_1mTV": 0.2344738245010376,
+      "top1_agree": 0.19055773317813873,
+      "kl_t_d": 5.116057872772217,
+      "kl_d_t": 3.9139204025268555,
+      "ppl_target": 18.695871353149414,
+      "ppl_draft": 3286.36083984375
+     },
+     "c4": {
+      "tv_mean": 0.7342708706855774,
+      "accept_prob_1mTV": 0.2657291293144226,
+      "top1_agree": 0.21159490942955017,
+      "kl_t_d": 4.4001970291137695,
+      "kl_d_t": 3.454317092895508,
+      "ppl_target": 21.06224250793457,
+      "ppl_draft": 1656.32861328125
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.10037965900892036,
+       "g1_tok_per_iter": 1.1208053691275168,
+       "g2_tok_per_iter": 1.1268556005398112,
+       "g4_tok_per_iter": 1.1268556005398112
+      },
+      "wikitext2": {
+       "match_rate": 0.25390625,
+       "g1_tok_per_iter": 1.2549019607843137,
+       "g2_tok_per_iter": 1.322997416020672,
+       "g4_tok_per_iter": 1.3350717079530638
+      },
+      "target_consistency": 0.9912524446845055
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_hadUniform_kd1/eval/B_bf16.json"
+    }
+   },
+   "2": {
+    "dir": "/data/lsh/results_accept/qwen05_c1_hadUniform_kd2",
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.7623708844184875,
+      "accept_prob_1mTV": 0.23762911558151245,
+      "top1_agree": 0.18923678994178772,
+      "kl_t_d": 3.4504849910736084,
+      "kl_d_t": 3.9097070693969727,
+      "ppl_target": 18.695871353149414,
+      "ppl_draft": 547.3267822265625,
+      "ppl_fp16": 18.12192153930664,
+      "kl_fp16_target": 0.0466005802154541,
+      "top1_fp16_target": 0.8842465877532959
+     },
+     "c4": {
+      "tv_mean": 0.7474088072776794,
+      "accept_prob_1mTV": 0.25259119272232056,
+      "top1_agree": 0.20322896540164948,
+      "kl_t_d": 3.2721402645111084,
+      "kl_d_t": 3.7705204486846924,
+      "ppl_target": 21.06224250793457,
+      "ppl_draft": 530.7828979492188,
+      "ppl_fp16": 20.124181747436523,
+      "kl_fp16_target": 0.05399157851934433,
+      "top1_fp16_target": 0.8642857074737549
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.2768536909043538,
+       "g1_tok_per_iter": 1.282642089093702,
+       "g2_tok_per_iter": 1.3801652892561984,
+       "g4_tok_per_iter": 1.4176570458404074
+      },
+      "wikitext2": {
+       "match_rate": 0.5361328125,
+       "g1_tok_per_iter": 1.499267935578331,
+       "g2_tok_per_iter": 1.7474402730375427,
+       "g4_tok_per_iter": 1.9212007504690432
+      },
+      "target_consistency": 0.9912524446845055
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_hadUniform_kd2/eval/A_bf16.json"
+    },
+    "B_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.4235188066959381,
+      "accept_prob_1mTV": 0.5764811933040619,
+      "top1_agree": 0.5302837491035461,
+      "kl_t_d": 1.0438406467437744,
+      "kl_d_t": 1.1042972803115845,
+      "ppl_target": 18.695871353149414,
+      "ppl_draft": 51.968231201171875
+     },
+     "c4": {
+      "tv_mean": 0.3897702693939209,
+      "accept_prob_1mTV": 0.6102297306060791,
+      "top1_agree": 0.5583659410476685,
+      "kl_t_d": 0.8614567518234253,
+      "kl_d_t": 0.8799452781677246,
+      "ppl_target": 21.06224250793457,
+      "ppl_draft": 47.820892333984375
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.5089580304305683,
+       "g1_tok_per_iter": 1.5462962962962963,
+       "g2_tok_per_iter": 1.835164835164835,
+       "g4_tok_per_iter": 2.1032745591939546
+      },
+      "wikitext2": {
+       "match_rate": 0.82421875,
+       "g1_tok_per_iter": 1.7746967071057191,
+       "g2_tok_per_iter": 2.4380952380952383,
+       "g4_tok_per_iter": 3.250793650793651
+      },
+      "target_consistency": 0.9912524446845055
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_hadUniform_kd2/eval/B_bf16.json"
+    }
+   },
+   "3": {
+    "dir": "/data/lsh/results_accept/qwen05_c1_hadUniform_kd3",
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.37029728293418884,
+      "accept_prob_1mTV": 0.6297027170658112,
+      "top1_agree": 0.5951565504074097,
+      "kl_t_d": 0.6693571209907532,
+      "kl_d_t": 0.7936370372772217,
+      "ppl_target": 18.695871353149414,
+      "ppl_draft": 35.843257904052734,
+      "ppl_fp16": 18.12192153930664,
+      "kl_fp16_target": 0.0466005802154541,
+      "top1_fp16_target": 0.8842465877532959
+     },
+     "c4": {
+      "tv_mean": 0.3484416902065277,
+      "accept_prob_1mTV": 0.6515583097934723,
+      "top1_agree": 0.6088551878929138,
+      "kl_t_d": 0.5580437183380127,
+      "kl_d_t": 0.6632058620452881,
+      "ppl_target": 21.06224250793457,
+      "ppl_draft": 35.78732681274414,
+      "ppl_fp16": 20.124181747436523,
+      "kl_fp16_target": 0.05399157851934433,
+      "top1_fp16_target": 0.8642857074737549
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.6558378928170594,
+       "g1_tok_per_iter": 1.6404715127701375,
+       "g2_tok_per_iter": 2.0719602977667493,
+       "g4_tok_per_iter": 2.5535168195718656
+      },
+      "wikitext2": {
+       "match_rate": 0.8701171875,
+       "g1_tok_per_iter": 1.8285714285714285,
+       "g2_tok_per_iter": 2.598984771573604,
+       "g4_tok_per_iter": 3.618374558303887
+      },
+      "target_consistency": 0.9912524446845055
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_hadUniform_kd3/eval/A_bf16.json"
+    },
+    "B_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.26265111565589905,
+      "accept_prob_1mTV": 0.737348884344101,
+      "top1_agree": 0.6987279653549194,
+      "kl_t_d": 0.37919872999191284,
+      "kl_d_t": 0.3996508717536926,
+      "ppl_target": 18.695871353149414,
+      "ppl_draft": 25.420019149780273
+     },
+     "c4": {
+      "tv_mean": 0.23854516446590424,
+      "accept_prob_1mTV": 0.7614548355340958,
+      "top1_agree": 0.7216242551803589,
+      "kl_t_d": 0.30260273814201355,
+      "kl_d_t": 0.31488293409347534,
+      "ppl_target": 21.06224250793457,
+      "ppl_draft": 27.298938751220703
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.7036502060649787,
+       "g1_tok_per_iter": 1.7181069958847737,
+       "g2_tok_per_iter": 2.2506738544474394,
+       "g4_tok_per_iter": 2.8694158075601375
+      },
+      "wikitext2": {
+       "match_rate": 0.8828125,
+       "g1_tok_per_iter": 1.841726618705036,
+       "g2_tok_per_iter": 2.5924050632911393,
+       "g4_tok_per_iter": 3.683453237410072
+      },
+      "target_consistency": 0.9912524446845055
+     },
+     "eval_json": "/data/lsh/results_accept/qwen05_c1_hadUniform_kd3/eval/B_bf16.json"
+    }
+   }
+  }
+ },
+ "notes": "Qwen C1 uniform alpha (vs 35W baseline results/E3/qwen05_c1_had35w_kd123_accept.json); same settings as the 35W full run (Had, wt2 1024x4096, fp64, FT 10/3/keep_best). W1/W2 runs cancelled by user. Training ran concurrently with other jobs (CPU-pinned node0, nice 10)."
+}
