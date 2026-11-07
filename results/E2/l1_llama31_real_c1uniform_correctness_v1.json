@@ -1,0 +1,310 @@
+{
+ "exp": "E2",
+ "run": "l1_llama31_real_c1uniform_correctness_v1",
+ "time": "2026-11-07T12:18:16",
+ "commit": "f5d5986",
+ "dirty_files": 3,
+ "host": "shark",
+ "cuda_visible_devices": "1,2",
+ "tmux_job": "sr-e2_llama31_real_check_v1",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "setting": "real Llama-3.1-8B C1 ckpt: NestModel (C1-specialized) vs DbD reference (bf16, uint8 codes)",
+  "ckpt": "/data/lsh/ckpts/weightvq/llama31_8b/c1_had_uniform_pile_fp32_ft5",
+  "draft_sd": "/data/lsh/results_accept/llama31_c1_uniform_kd2/train_B_bf16/draft_codebooks.pt",
+  "kd": 2,
+  "k": 5,
+  "gen": 32,
+  "prompts": "4 chat + 4 wikitext2 (64 tok)"
+ },
+ "metrics": {
+  "rows": [
+   {
+    "kind": "chat",
+    "prompt_len": 48,
+    "gen": 32,
+    "prefill_vs_ref": {
+     "rel": 0.024134565144777298,
+     "maxabs": 1.3125,
+     "top1": 1.0,
+     "kl": 0.00034864668850786984
+    },
+    "decode_M1_vs_ref": {
+     "rel": 0.03282437101006508,
+     "maxabs": 1.96875,
+     "top1": 1.0,
+     "kl": 0.00030928521300666034
+    },
+    "verify_M5_vs_ref": {
+     "rel": 0.027710558846592903,
+     "maxabs": 1.71875,
+     "top1": 1.0,
+     "kl": 0.0002644238411448896
+    },
+    "draft_decode_M1_vs_ref_draft": {
+     "rel": 0.015044212341308594,
+     "maxabs": 0.2421875,
+     "top1": 1.0,
+     "kl": 0.0005411403835751116
+    },
+    "greedy_first_divergence": null
+   },
+   {
+    "kind": "chat",
+    "prompt_len": 45,
+    "gen": 32,
+    "prefill_vs_ref": {
+     "rel": 0.015035973861813545,
+     "maxabs": 0.421875,
+     "top1": 0.9375,
+     "kl": 0.0007291838992387056
+    },
+    "decode_M1_vs_ref": {
+     "rel": 0.014720495790243149,
+     "maxabs": 0.4375,
+     "top1": 1.0,
+     "kl": 0.0007132150931283832
+    },
+    "verify_M5_vs_ref": {
+     "rel": 0.01498351525515318,
+     "maxabs": 0.390625,
+     "top1": 0.96875,
+     "kl": 0.0006851866492070258
+    },
+    "draft_decode_M1_vs_ref_draft": {
+     "rel": 0.011958818882703781,
+     "maxabs": 0.25,
+     "top1": 0.96875,
+     "kl": 0.0006411465001292527
+    },
+    "greedy_first_divergence": 29,
+    "divergence": {
+     "index": 29,
+     "ref_tok": 3596,
+     "runner_tok": 16058,
+     "ref_margin": 0.0,
+     "ref_ulp": 0.166015625,
+     "near_tie_ref_ulps": 0.0,
+     "teacher_forced_runner_top1_matches_ref": true
+    }
+   },
+   {
+    "kind": "chat",
+    "prompt_len": 45,
+    "gen": 32,
+    "prefill_vs_ref": {
+     "rel": 0.021127674728631973,
+     "maxabs": 0.6328125,
+     "top1": 0.96875,
+     "kl": 0.0005441114190034568
+    },
+    "decode_M1_vs_ref": {
+     "rel": 0.020150506868958473,
+     "maxabs": 0.5625,
+     "top1": 0.96875,
+     "kl": 0.0004244369047228247
+    },
+    "verify_M5_vs_ref": {
+     "rel": 0.01988908462226391,
+     "maxabs": 0.6005859375,
+     "top1": 0.96875,
+     "kl": 0.0005455873906612396
+    },
+    "draft_decode_M1_vs_ref_draft": {
+     "rel": 0.012847655452787876,
+     "maxabs": 0.25,
+     "top1": 1.0,
+     "kl": 0.00038793066050857306
+    },
+    "greedy_first_divergence": 0,
+    "divergence": {
+     "index": 0,
+     "ref_tok": 8586,
+     "runner_tok": 20215,
+     "ref_margin": 0.0,
+     "ref_ulp": 0.1904296875,
+     "near_tie_ref_ulps": 0.0,
+     "teacher_forced_runner_top1_matches_ref": false
+    }
+   },
+   {
+    "kind": "chat",
+    "prompt_len": 48,
+    "gen": 32,
+    "prefill_vs_ref": {
+     "rel": 0.016684236004948616,
+     "maxabs": 0.40625,
+     "top1": 1.0,
+     "kl": 0.00018109797383658588
+    },
+    "decode_M1_vs_ref": {
+     "rel": 0.01678772270679474,
+     "maxabs": 0.578125,
+     "top1": 1.0,
+     "kl": 0.0003576880553737283
+    },
+    "verify_M5_vs_ref": {
+     "rel": 0.016350802034139633,
+     "maxabs": 0.4375,
+     "top1": 1.0,
+     "kl": 0.0001933794264914468
+    },
+    "draft_decode_M1_vs_ref_draft": {
+     "rel": 0.0147836459800601,
+     "maxabs": 0.34375,
+     "top1": 1.0,
+     "kl": 0.0005430315504781902
+    },
+    "greedy_first_divergence": null
+   },
+   {
+    "kind": "wikitext2",
+    "prompt_len": 64,
+    "gen": 32,
+    "prefill_vs_ref": {
+     "rel": 0.015979673713445663,
+     "maxabs": 0.4375,
+     "top1": 1.0,
+     "kl": 0.0007269781199283898
+    },
+    "decode_M1_vs_ref": {
+     "rel": 0.0169303547590971,
+     "maxabs": 0.625,
+     "top1": 1.0,
+     "kl": 0.0006724112899973989
+    },
+    "verify_M5_vs_ref": {
+     "rel": 0.01514077465981245,
+     "maxabs": 0.328125,
+     "top1": 1.0,
+     "kl": 0.00044745879131369293
+    },
+    "draft_decode_M1_vs_ref_draft": {
+     "rel": 0.0166478268802166,
+     "maxabs": 0.9375,
+     "top1": 0.9375,
+     "kl": 0.000952361267991364
+    },
+    "greedy_first_divergence": null
+   },
+   {
+    "kind": "wikitext2",
+    "prompt_len": 64,
+    "gen": 32,
+    "prefill_vs_ref": {
+     "rel": 0.013935227878391743,
+     "maxabs": 0.3515625,
+     "top1": 0.96875,
+     "kl": 0.0006543816416524351
+    },
+    "decode_M1_vs_ref": {
+     "rel": 0.014078786596655846,
+     "maxabs": 0.34375,
+     "top1": 0.96875,
+     "kl": 0.0007615955546498299
+    },
+    "verify_M5_vs_ref": {
+     "rel": 0.013852173462510109,
+     "maxabs": 0.3671875,
+     "top1": 1.0,
+     "kl": 0.0006706399726681411
+    },
+    "draft_decode_M1_vs_ref_draft": {
+     "rel": 0.01091807335615158,
+     "maxabs": 0.296875,
+     "top1": 0.96875,
+     "kl": 0.0005678526358678937
+    },
+    "greedy_first_divergence": null
+   },
+   {
+    "kind": "wikitext2",
+    "prompt_len": 64,
+    "gen": 32,
+    "prefill_vs_ref": {
+     "rel": 0.014047505334019661,
+     "maxabs": 0.234375,
+     "top1": 1.0,
+     "kl": 0.0007039647316560149
+    },
+    "decode_M1_vs_ref": {
+     "rel": 0.013301069848239422,
+     "maxabs": 0.25,
+     "top1": 1.0,
+     "kl": 0.0007561229867860675
+    },
+    "verify_M5_vs_ref": {
+     "rel": 0.013176781125366688,
+     "maxabs": 0.21875,
+     "top1": 1.0,
+     "kl": 0.0006948569207452238
+    },
+    "draft_decode_M1_vs_ref_draft": {
+     "rel": 0.009200068190693855,
+     "maxabs": 0.1875,
+     "top1": 0.96875,
+     "kl": 0.00048632427933625877
+    },
+    "greedy_first_divergence": 4,
+    "divergence": {
+     "index": 4,
+     "ref_tok": 40360,
+     "runner_tok": 65271,
+     "ref_margin": -0.0625,
+     "ref_ulp": 0.11865234375,
+     "near_tie_ref_ulps": -0.5267489711934157,
+     "teacher_forced_runner_top1_matches_ref": false
+    }
+   },
+   {
+    "kind": "wikitext2",
+    "prompt_len": 64,
+    "gen": 32,
+    "prefill_vs_ref": {
+     "rel": 0.011432870291173458,
+     "maxabs": 0.3125,
+     "top1": 0.9375,
+     "kl": 0.0005342097720131278
+    },
+    "decode_M1_vs_ref": {
+     "rel": 0.01133155357092619,
+     "maxabs": 0.3984375,
+     "top1": 0.90625,
+     "kl": 0.0005204173503443599
+    },
+    "verify_M5_vs_ref": {
+     "rel": 0.011358835734426975,
+     "maxabs": 0.6171875,
+     "top1": 0.96875,
+     "kl": 0.0005559311248362064
+    },
+    "draft_decode_M1_vs_ref_draft": {
+     "rel": 0.009210420772433281,
+     "maxabs": 0.25,
+     "top1": 1.0,
+     "kl": 0.000545949733350426
+    },
+    "greedy_first_divergence": 2,
+    "divergence": {
+     "index": 2,
+     "ref_tok": 719,
+     "runner_tok": 902,
+     "ref_margin": 0.0,
+     "ref_ulp": 0.109375,
+     "near_tie_ref_ulps": 0.0,
+     "teacher_forced_runner_top1_matches_ref": false
+    }
+   }
+  ]
+ },
+ "notes": ""
+}

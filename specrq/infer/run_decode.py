@@ -70,11 +70,46 @@ def lm_head_us(model, M, iters=50):
     return statistics.median(ts)
 
 
+def aggregate(rows):
+    """Per (gamma, kd, draft_src, vd) and prompt kind (+ 'all'): median over prompts of the per-prompt medians of
+    tau, tokens/s, speedup vs AR and the per-round parts; AR tokens/s per kind."""
+    out = []
+    kinds = sorted({r["kind"] for r in rows}) + ["all"]
+    for kind in kinds:
+        ar = [r for r in rows if r["mode"] == "ar" and (kind == "all" or r["kind"] == kind)]
+        if ar:
+            out.append({"mode": "ar", "kind": kind, "n_prompts": len(ar),
+                        "tokens_per_s": statistics.median(r["tokens_per_s"]["median"] for r in ar),
+                        "step_us": statistics.median(r["step_us"]["median"] for r in ar)})
+        keys = sorted({(r["gamma"], r["kd"], r["draft_src"], r["vd"]) for r in rows if r["mode"] == "spec"})
+        for g, kd, src, vd in keys:
+            sel = [r for r in rows if r["mode"] == "spec" and (r["gamma"], r["kd"], r["draft_src"], r["vd"]) ==
+                   (g, kd, src, vd) and (kind == "all" or r["kind"] == kind)]
+            if not sel:
+                continue
+            d = {"mode": "spec", "kind": kind, "gamma": g, "kd": kd, "draft_src": src, "vd": vd, "n_prompts": len(sel)}
+            for key in ("tau", "tokens_per_s", "t_draft_round_ms", "t_verify_ms", "t_overhead_ms", "accept_rate"):
+                d[key] = statistics.median(r[key]["median"] for r in sel)
+            d["speedup_vs_ar_median"] = statistics.median(r["speedup_vs_ar"] for r in sel)
+            d["speedup_vs_ar_min"] = min(r["speedup_vs_ar"] for r in sel)
+            d["speedup_vs_ar_max"] = max(r["speedup_vs_ar"] for r in sel)
+            d["n_greedy_match_all_repeats"] = sum(all(r["greedy_match"]) for r in sel)
+            out.append(d)
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="/data/models/qwen2.5_0.5b_instruct")
     ap.add_argument("--ckpt", default="/data/lsh/ckpts/weightvq/smoke/qwen05_c1_35w_tiny")
     ap.add_argument("--draft-sd", default=None, help="DbD draft_state_dict file (use_draft=True)")
+    ap.add_argument("--draft-sds", nargs="+", default=[], help="several draft_state_dict files (e.g. kd2 and kd3 "
+                    "TV sets); each installs its k_d set, selected per spec config with --specs kd:tv")
+    ap.add_argument("--specs", nargs="+", default=None, help="spec configs 'kd:copy' (target codebook prefix) or "
+                    "'kd:tv' (installed draft set for kd); overrides --kds")
+    ap.add_argument("--wt2", type=int, default=0, help="add N wikitext2 prompts (64 tokens at (100+i)*512 of the "
+                    "test split, as experiments/06_accept/draft_target_eval.py)")
+    ap.add_argument("--no-text-prompts", action="store_true", help="drop the 3 built-in text prompts")
     ap.add_argument("--kt", type=int, default=None)
     ap.add_argument("--kds", type=int, nargs="+", default=[3, 2])
     ap.add_argument("--gammas", type=int, nargs="+", default=[1, 2, 4])
@@ -96,11 +131,21 @@ def main(argv=None):
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(a.model)
     m = NestModel(a.model, a.ckpt)
+    from specrq.nestkern.gpucheck import cotenants, require_alone
+    cotenant_start = require_alone() if a.run else (cotenants() or "none")
     use_draft = False
-    if a.draft_sd:
-        n = m.load_draft(torch.load(a.draft_sd, map_location="cpu", weights_only=False))
+    for path in ([a.draft_sd] if a.draft_sd else []) + list(a.draft_sds):
+        n = m.load_draft(torch.load(path, map_location="cpu", weights_only=False))
         use_draft = n > 0
-        print(f"[run_decode] installed draft codebooks on {n} linears")
+        print(f"[run_decode] installed draft codebooks from {path} on {n} linears")
+    if a.specs:
+        spec_list = []
+        for sp in a.specs:
+            kd_s, src = sp.split(":")
+            assert src in ("copy", "tv"), sp
+            spec_list.append((int(kd_s), src == "tv", src))
+    else:
+        spec_list = [(kd, use_draft, "tv" if use_draft else "copy") for kd in a.kds]
     from specrq.infer.frspec import coverage, default_freq_dir, load_subset
     freq_dir = a.freq_dir or default_freq_dir(m.cfg)
     vd_cov = {}
@@ -109,13 +154,24 @@ def main(argv=None):
             ids = load_subset(freq_dir, vd, m.lm_head.shape[0], chat=not a.no_chat_forced)
             m.set_draft_vocab(ids)
             vd_cov[vd] = coverage(freq_dir, ids)
-    prompt_texts = list(PROMPTS)
-    prompts = [tok(p, return_tensors="pt").input_ids[0].cuda() for p in PROMPTS]
+    prompt_texts = [] if a.no_text_prompts else list(PROMPTS)
+    prompts = [] if a.no_text_prompts else [tok(p, return_tensors="pt").input_ids[0].cuda() for p in PROMPTS]
+    kinds = ["text"] * len(prompts)
     if a.chat:
         for p in INSTRUCT_PROMPTS:
             s = tok.apply_chat_template([{"role": "user", "content": p}], tokenize=False, add_generation_prompt=True)
             prompt_texts.append(s)
             prompts.append(tok(s, return_tensors="pt", add_special_tokens=False).input_ids[0].cuda())
+            kinds.append("chat")
+    if a.wt2:
+        sys.path.insert(0, str(REPO / "specrq" / "dbd"))
+        from src.datautils import get_loaders
+        wt = get_loaders("wikitext2", seed=0, model_path=a.model, seqlen=512, eval_mode=True)
+        for i in range(a.wt2):
+            ids = wt[0, (100 + i) * 512:(100 + i) * 512 + 64]
+            prompt_texts.append(tok.decode(ids))
+            prompts.append(ids.cuda())
+            kinds.append("wikitext2")
     from transformers import GenerationConfig
     e = GenerationConfig.from_pretrained(a.model).eos_token_id
     eos_ids = sorted(set(e if isinstance(e, list) else [e]))
@@ -134,7 +190,7 @@ def main(argv=None):
             ar_ref[pi] = toks
             det = all(r[0] == toks for r in runs)
             st = [r[1] for r in runs]
-            rows.append({"mode": "ar", "prompt": pi, "kt": a.kt or m.L, "reproducible": det,
+            rows.append({"mode": "ar", "prompt": pi, "kind": kinds[pi], "kt": a.kt or m.L, "reproducible": det,
                          "tokens_per_s": med([s["tokens_per_s"] for s in st]),
                          "t_decode_s": med([s["t_decode_s"] for s in st]),
                          "t_prefill_s": med([s["t_prefill_s"] for s in st]),
@@ -147,7 +203,7 @@ def main(argv=None):
         ar_tps = {r["prompt"]: r["tokens_per_s"]["median"] for r in rows}
         ar_diag, diag_out = None, {}
 
-        def diagnose(pi, g, kd, vd, spec_toks):
+        def diagnose(pi, g, kd, vd, spec_toks, use_draft):
             nonlocal ar_diag
             if ar_diag is None:
                 ar_diag = ARDecoder(m, T, k=a.kt, eos=eos, n_max=T, record_logits=True)
@@ -170,15 +226,15 @@ def main(argv=None):
             return r
 
         for g in a.gammas:
-            for kd, vd in [(kd, vd) for kd in a.kds for vd in a.vds]:
+            for kd, use_draft, src, vd in [(kd, ud, src, vd) for kd, ud, src in spec_list for vd in a.vds]:
                 sd = SpecDecoder(m, T, g, kd, a.kt, use_draft, vd=vd or None, eos=eos)
                 sd.generate(prompts[0], 16)  # warm-up
                 for pi, p in enumerate(prompts):
                     runs = [sd.generate(p, a.n_new) for _ in range(a.repeats)]
                     st = [r[1] for r in runs]
                     fd = [first_divergence(r[0], ar_ref[pi]) for r in runs]
-                    r = {"mode": "spec", "prompt": pi, "gamma": g, "kd": kd, "vd": vd or m.lm_head.shape[0],
-                         "kt": a.kt or m.L, "use_draft": use_draft,
+                    r = {"mode": "spec", "prompt": pi, "kind": kinds[pi], "gamma": g, "kd": kd, "draft_src": src,
+                         "vd": vd or m.lm_head.shape[0], "kt": a.kt or m.L, "use_draft": use_draft,
                          "first_divergence": fd, "greedy_match": [f is None for f in fd],
                          "n_tokens": [len(x[0]) for x in runs], "eos_hit": [x[1].get("eos_hit") for x in runs],
                          "_toks": runs[0][0]}
@@ -189,7 +245,7 @@ def main(argv=None):
                     r["share"] = {k2: statistics.median(s[k2] for s in st) / statistics.median(s["t_decode_s"] for s in st)
                                   for k2 in ("t_draft_s", "t_verify_s", "t_overhead_s")}
                     rows.append(r)
-                    print(f"[{tag} spec g={g} kd={kd} vd={vd}] prompt {pi}: {r['tokens_per_s']['median']:.1f} tok/s "
+                    print(f"[{tag} spec g={g} kd={kd}:{src} vd={vd}] prompt {pi} ({kinds[pi]}): {r['tokens_per_s']['median']:.1f} tok/s "
                           f"(x{r['speedup_vs_ar'] or 0:.2f} AR) n={r['n_tokens']} tau={r['tau']['median']:.2f} "
                           f"acc={r['accept_rate']['median']:.2f} draft {r['t_draft_round_ms']['median']:.2f}ms verify "
                           f"{r['t_verify_ms']['median']:.2f}ms ovh {r['t_overhead_ms']['median']:.2f}ms first_div={fd}",
@@ -198,9 +254,9 @@ def main(argv=None):
                 torch.cuda.empty_cache()
                 if not a.no_tie_check:  # untimed, after the timed runs of this config
                     for r in rows:
-                        if r["mode"] == "spec" and r["gamma"] == g and r["kd"] == kd and \
+                        if r["mode"] == "spec" and r["gamma"] == g and r["kd"] == kd and r["draft_src"] == src and \
                                 r["vd"] == (vd or m.lm_head.shape[0]) and any(f is not None for f in r["first_divergence"]):
-                            r["divergence"] = diagnose(r["prompt"], g, kd, vd, r["_toks"])
+                            r["divergence"] = diagnose(r["prompt"], g, kd, vd, r["_toks"], use_draft)
                             d = r["divergence"]
                             print(f"[{tag} tie] g={g} kd={kd} vd={vd} prompt {r['prompt']}: {d}", flush=True)
         del ar_diag
@@ -226,10 +282,15 @@ def main(argv=None):
     lm = {f"M{M}": lm_head_us(m, M) for M in sorted({1, *[g + 1 for g in a.gammas]})}
     ar_step = statistics.median(r["step_us"]["median"] for r in rows if r["mode"] == "ar")
     print(f"lm_head bf16 GEMV us: {lm}; share of AR step {lm['M1'] / ar_step:.2%}")
+    agg = aggregate(rows)
+    for x in agg:
+        print("[agg]", x, flush=True)
     if a.run:
         sys.path.insert(0, str(REPO))
         from tools.results import save_result
-        print("saved", save_result("E4", a.run, config={
+        print("saved", save_result("E4", a.run, config={"co_tenant_start": cotenant_start,
+            "co_tenant_end": cotenants() or "none", "specs": a.specs, "draft_sds": a.draft_sds, "wt2": a.wt2,
+            "prompt_kinds": kinds,
             "setting": "greedy AR vs self-spec, NestModel CUDA graphs, batch 1", "model": a.model, "ckpt": a.ckpt,
             "draft_sd": a.draft_sd, "kt": a.kt or m.L, "kds": a.kds, "gammas": a.gammas, "n_new": a.n_new,
             "repeats": a.repeats, "prompts": prompt_texts,
@@ -238,7 +299,7 @@ def main(argv=None):
             "linear_bytes_per_token": {f"k{k}": m.linear_bytes(k) for k in range(1, m.L + 1)},
             "lm_head_bytes": m.lm_head.numel() * 2, "vds": a.vds, "freq_dir": freq_dir,
             "draft_vocab_bytes": m.draft_vocab_bytes(), "draft_vocab_pileval_coverage": vd_cov},
-            metrics={"rows": rows, "tie_check": tie, "rows_eos_stop": rows_eos, "tie_check_eos_stop": tie_eos,
+            metrics={"rows": rows, "aggregate": agg, "tie_check": tie, "rows_eos_stop": rows_eos, "tie_check_eos_stop": tie_eos,
                      "lm_head_us": lm, "lm_head_share_of_ar_step": lm["M1"] / ar_step},
             model_dir=a.model))
 

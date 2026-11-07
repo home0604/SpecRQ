@@ -46,7 +46,9 @@ class NestLinear:
 
     def __init__(self, qlin, device, dtype):
         qw = qlin.quantized_weight
-        p = pack_planar(qw.get_codes(), qw.get_codebooks().detach(), qw.get_scales().detach()).to(device, dtype)
+        # pack on the GPU (Llama-8B layer pickles hold int32 codes; CPU packing is slow and RAM-heavy)
+        p = pack_planar(qw.get_codes().to(device), qw.get_codebooks().detach().to(device),
+                        qw.get_scales().detach().to(device)).to(device, dtype)
         self.N, self.K, self.L = p.N, p.K, p.L
         self.mcodes = mma_codes(p.codes)
         self.kcodes = kernel_codes(p.codes) if self.K <= self.GEMV_MAX_K else None
