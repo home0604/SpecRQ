@@ -30,9 +30,15 @@ def main():
     ap.add_argument("--gran", default="codebook", choices=["codebook", "dim"])
     ap.add_argument("--kd", type=int, default=3)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--init_draft", default=None, help="round an existing draft copy (e.g. TV-trained draft_codebooks.pt) "
+                    "instead of the target codebooks; its draft scales are kept as stored")
     a = ap.parse_args()
     model = get_model(a.model, a.ckpt, "auto")
     attach_draft_codebooks(model, a.kd)
+    if a.init_draft:
+        from src.draft import load_draft_state_dict
+        n = load_draft_state_dict(model, torch.load(a.init_draft))
+        print("rounding draft copies from", a.init_draft, n, "linears")
     stats = {"rel_mse": [], "bits_codebook": 0, "bits_scales": 0, "n_linears": 0, "n_params_target": 0}
     with torch.no_grad():
         for name, m in model.named_modules():
