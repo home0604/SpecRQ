@@ -11,7 +11,7 @@ set -euo pipefail
 NAME=$1; GPUS=$2; ENV=$3; shift 4
 REPO=/hai/home/lsh/SpecRQ; LOGDIR=/data/lsh/logs; mkdir -p "$LOGDIR"
 SESS="sr-$NAME"; LOG="$LOGDIR/$NAME.log"; META="$LOGDIR/$NAME.meta.json"; RUNNER="$LOGDIR/$NAME.sh"
-tmux has-session -t "$SESS" 2>/dev/null && { echo "session $SESS already exists"; exit 1; }
+tmux has-session -t "=$SESS" 2>/dev/null && { echo "session $SESS already exists"; exit 1; }
 [[ -e "$LOG" || -e "$META" ]] && { echo "$LOG exists; pick a new name"; exit 1; }
 if [[ "$GPUS" != none ]]; then
   for g in ${GPUS//,/ }; do

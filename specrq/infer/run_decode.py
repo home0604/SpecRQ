@@ -119,6 +119,9 @@ def main(argv=None):
     ap.add_argument("--no-eos-stop", action="store_true", help="no-op (fixed length is the default)")
     ap.add_argument("--no-tie-check", action="store_true", help="skip the untimed near-tie diagnosis")
     ap.add_argument("--tie-ulps", type=float, default=2.0)
+    ap.add_argument("--div-logits-dir", default=None, help="(tie check) save AR / verify logits top-k at each first "
+                    "divergence (same prefix) to DIR/<run>_divlogits.pt and add the top-k to the divergence summary")
+    ap.add_argument("--div-topk", type=int, default=8)
     ap.add_argument("--no-chat-forced", action="store_true", help="draft vocab forces stop tokens only")
     ap.add_argument("--chat", action="store_true", help="also run the chat-template INSTRUCT_PROMPTS")
     ap.add_argument("--freq-dir", default=None)
@@ -202,6 +205,7 @@ def main(argv=None):
         del ar
         ar_tps = {r["prompt"]: r["tokens_per_s"]["median"] for r in rows}
         ar_diag, diag_out = None, {}
+        div_saved = []
 
         def diagnose(pi, g, kd, vd, spec_toks, use_draft):
             nonlocal ar_diag
@@ -223,6 +227,18 @@ def main(argv=None):
                 return r
             r.update(tie_report(i, ar_toks[i], sp[i], ar_logs[i], vl[i] if vl is not None and i < len(vl) else None,
                                 a.tie_ulps))
+            if a.div_logits_dir:  # AR row (M=1 path) and verify row that produced token i; prefix tokens[:i] equal
+                tk = {"ar": ar_logs[i].float()}
+                if vl is not None and i < len(vl):
+                    tk["verify"] = vl[i].float()
+                rec = {"prompt": pi, "gamma": g, "kd": kd, "vd": vd, "index": i, "ar_tok": int(ar_toks[i]),
+                       "spec_tok": int(sp[i]), "prefix": ar_toks[:i]}
+                for nm, lg in tk.items():
+                    tv, ti = lg.topk(a.div_topk)
+                    r[f"{nm}_topk_ids"], r[f"{nm}_topk_logits"] = ti.tolist(), tv.tolist()
+                    rec[f"{nm}_topk_ids"], rec[f"{nm}_topk_logits"] = ti.cpu(), tv.cpu()
+                    rec[f"{nm}_logit_of"] = {"ar_tok": float(lg[ar_toks[i]]), "spec_tok": float(lg[sp[i]])}
+                div_saved.append(rec)
             return r
 
         for g in a.gammas:
@@ -261,6 +277,11 @@ def main(argv=None):
                             print(f"[{tag} tie] g={g} kd={kd} vd={vd} prompt {r['prompt']}: {d}", flush=True)
         del ar_diag
         torch.cuda.empty_cache()
+        if a.div_logits_dir and div_saved:
+            Path(a.div_logits_dir).mkdir(parents=True, exist_ok=True)
+            fp = Path(a.div_logits_dir) / f"{a.run or 'run'}_{tag}_divlogits.pt"
+            torch.save(div_saved, fp)
+            print(f"[{tag} tie] saved {len(div_saved)} divergence logit records to {fp}", flush=True)
         for r in rows:
             r.pop("_toks", None)
         divs = [r["divergence"] for r in rows if "divergence" in r]
