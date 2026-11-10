@@ -12,6 +12,8 @@ Near-tie check (untimed, default on): every AR/spec divergence is re-run with lo
 l[ar_tok] - l[spec_tok] <= --tie-ulps bf16 ulps -> near_tie, else counted as a bug candidate (WARNING in tie_check).
 --chat adds INSTRUCT_PROMPTS (chat template) to the 3 text prompts. Draft vocab keeps chat specials (--no-chat-forced
 = stop tokens only, as in results/E4/frspec_qwen05_*). Default V_d = frspec.DEFAULT_VD (32768).
+--draft-kv own shared: draft KV mode per spec config (own = separate draft cache with catch-up, default; shared =
+draft reads the target cache, decode.SpecDecoder docstring). Rows carry draft_kv; aggregate keys include it.
 Usage: python -m specrq.infer.run_decode --ckpt DIR [--gammas 1 2 4] [--kds 3 2] [--vds 0 32768] [--n-new 128] [--run NAME]
 """
 from __future__ import annotations
@@ -81,13 +83,15 @@ def aggregate(rows):
             out.append({"mode": "ar", "kind": kind, "n_prompts": len(ar),
                         "tokens_per_s": statistics.median(r["tokens_per_s"]["median"] for r in ar),
                         "step_us": statistics.median(r["step_us"]["median"] for r in ar)})
-        keys = sorted({(r["gamma"], r["kd"], r["draft_src"], r["vd"]) for r in rows if r["mode"] == "spec"})
-        for g, kd, src, vd in keys:
-            sel = [r for r in rows if r["mode"] == "spec" and (r["gamma"], r["kd"], r["draft_src"], r["vd"]) ==
-                   (g, kd, src, vd) and (kind == "all" or r["kind"] == kind)]
+        cfg_of = lambda r: (r["gamma"], r["kd"], r["draft_src"], r["vd"], r.get("draft_kv", "own"))
+        keys = sorted({cfg_of(r) for r in rows if r["mode"] == "spec"})
+        for g, kd, src, vd, dkv in keys:
+            sel = [r for r in rows if r["mode"] == "spec" and cfg_of(r) == (g, kd, src, vd, dkv) and
+                   (kind == "all" or r["kind"] == kind)]
             if not sel:
                 continue
-            d = {"mode": "spec", "kind": kind, "gamma": g, "kd": kd, "draft_src": src, "vd": vd, "n_prompts": len(sel)}
+            d = {"mode": "spec", "kind": kind, "gamma": g, "kd": kd, "draft_src": src, "vd": vd, "draft_kv": dkv,
+                 "n_prompts": len(sel)}
             for key in ("tau", "tokens_per_s", "t_draft_round_ms", "t_verify_ms", "t_overhead_ms", "accept_rate"):
                 d[key] = statistics.median(r[key]["median"] for r in sel)
             d["speedup_vs_ar_median"] = statistics.median(r["speedup_vs_ar"] for r in sel)
@@ -125,6 +129,8 @@ def main(argv=None):
     ap.add_argument("--no-chat-forced", action="store_true", help="draft vocab forces stop tokens only")
     ap.add_argument("--chat", action="store_true", help="also run the chat-template INSTRUCT_PROMPTS")
     ap.add_argument("--freq-dir", default=None)
+    ap.add_argument("--draft-kv", nargs="+", default=["own"], choices=["own", "shared"],
+                    help="draft KV mode(s): own = separate draft cache (catch-up), shared = draft reads target cache")
     ap.add_argument("--n-new", type=int, default=128)
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--run", default=None)
@@ -207,7 +213,7 @@ def main(argv=None):
         ar_diag, diag_out = None, {}
         div_saved = []
 
-        def diagnose(pi, g, kd, vd, spec_toks, use_draft):
+        def diagnose(pi, g, kd, vd, spec_toks, use_draft, dkv="own"):
             nonlocal ar_diag
             if ar_diag is None:
                 ar_diag = ARDecoder(m, T, k=a.kt, eos=eos, n_max=T, record_logits=True)
@@ -216,7 +222,7 @@ def main(argv=None):
                 diag_out[pi] = (diag_out[pi], [ar_token_logits(ar_diag, i).clone()
                                                for i in range(len(diag_out[pi]))])
             ar_toks, ar_logs = diag_out[pi]
-            sdd = SpecDecoder(m, T, g, kd, a.kt, use_draft, vd=vd or None, eos=eos, record_logits=True)
+            sdd = SpecDecoder(m, T, g, kd, a.kt, use_draft, vd=vd or None, eos=eos, record_logits=True, draft_kv=dkv)
             sp = sdd.generate(prompts[pi], a.n_new)[0]
             vl = sdd.rec_logits
             del sdd
@@ -231,7 +237,7 @@ def main(argv=None):
                 tk = {"ar": ar_logs[i].float()}
                 if vl is not None and i < len(vl):
                     tk["verify"] = vl[i].float()
-                rec = {"prompt": pi, "gamma": g, "kd": kd, "vd": vd, "index": i, "ar_tok": int(ar_toks[i]),
+                rec = {"prompt": pi, "gamma": g, "kd": kd, "vd": vd, "draft_kv": dkv, "index": i, "ar_tok": int(ar_toks[i]),
                        "spec_tok": int(sp[i]), "prefix": ar_toks[:i]}
                 for nm, lg in tk.items():
                     tv, ti = lg.topk(a.div_topk)
@@ -242,15 +248,16 @@ def main(argv=None):
             return r
 
         for g in a.gammas:
-            for kd, use_draft, src, vd in [(kd, ud, src, vd) for kd, ud, src in spec_list for vd in a.vds]:
-                sd = SpecDecoder(m, T, g, kd, a.kt, use_draft, vd=vd or None, eos=eos)
+            for kd, use_draft, src, vd, dkv in [(kd, ud, src, vd, dkv) for kd, ud, src in spec_list for vd in a.vds
+                                                for dkv in a.draft_kv]:
+                sd = SpecDecoder(m, T, g, kd, a.kt, use_draft, vd=vd or None, eos=eos, draft_kv=dkv)
                 sd.generate(prompts[0], 16)  # warm-up
                 for pi, p in enumerate(prompts):
                     runs = [sd.generate(p, a.n_new) for _ in range(a.repeats)]
                     st = [r[1] for r in runs]
                     fd = [first_divergence(r[0], ar_ref[pi]) for r in runs]
                     r = {"mode": "spec", "prompt": pi, "kind": kinds[pi], "gamma": g, "kd": kd, "draft_src": src,
-                         "vd": vd or m.lm_head.shape[0], "kt": a.kt or m.L, "use_draft": use_draft,
+                         "vd": vd or m.lm_head.shape[0], "kt": a.kt or m.L, "use_draft": use_draft, "draft_kv": dkv,
                          "first_divergence": fd, "greedy_match": [f is None for f in fd],
                          "n_tokens": [len(x[0]) for x in runs], "eos_hit": [x[1].get("eos_hit") for x in runs],
                          "_toks": runs[0][0]}
@@ -261,7 +268,7 @@ def main(argv=None):
                     r["share"] = {k2: statistics.median(s[k2] for s in st) / statistics.median(s["t_decode_s"] for s in st)
                                   for k2 in ("t_draft_s", "t_verify_s", "t_overhead_s")}
                     rows.append(r)
-                    print(f"[{tag} spec g={g} kd={kd}:{src} vd={vd}] prompt {pi} ({kinds[pi]}): {r['tokens_per_s']['median']:.1f} tok/s "
+                    print(f"[{tag} spec g={g} kd={kd}:{src} vd={vd} kv={dkv}] prompt {pi} ({kinds[pi]}): {r['tokens_per_s']['median']:.1f} tok/s "
                           f"(x{r['speedup_vs_ar'] or 0:.2f} AR) n={r['n_tokens']} tau={r['tau']['median']:.2f} "
                           f"acc={r['accept_rate']['median']:.2f} draft {r['t_draft_round_ms']['median']:.2f}ms verify "
                           f"{r['t_verify_ms']['median']:.2f}ms ovh {r['t_overhead_ms']['median']:.2f}ms first_div={fd}",
@@ -271,10 +278,11 @@ def main(argv=None):
                 if not a.no_tie_check:  # untimed, after the timed runs of this config
                     for r in rows:
                         if r["mode"] == "spec" and r["gamma"] == g and r["kd"] == kd and r["draft_src"] == src and \
-                                r["vd"] == (vd or m.lm_head.shape[0]) and any(f is not None for f in r["first_divergence"]):
-                            r["divergence"] = diagnose(r["prompt"], g, kd, vd, r["_toks"], use_draft)
+                                r["vd"] == (vd or m.lm_head.shape[0]) and r["draft_kv"] == dkv and \
+                                any(f is not None for f in r["first_divergence"]):
+                            r["divergence"] = diagnose(r["prompt"], g, kd, vd, r["_toks"], use_draft, dkv)
                             d = r["divergence"]
-                            print(f"[{tag} tie] g={g} kd={kd} vd={vd} prompt {r['prompt']}: {d}", flush=True)
+                            print(f"[{tag} tie] g={g} kd={kd} vd={vd} kv={dkv} prompt {r['prompt']}: {d}", flush=True)
         del ar_diag
         torch.cuda.empty_cache()
         if a.div_logits_dir and div_saved:
@@ -285,7 +293,7 @@ def main(argv=None):
         for r in rows:
             r.pop("_toks", None)
         divs = [r["divergence"] for r in rows if "divergence" in r]
-        bad = [dict(d, prompt=r["prompt"], gamma=r["gamma"], kd=r["kd"], vd=r["vd"]) for r in rows
+        bad = [dict(d, prompt=r["prompt"], gamma=r["gamma"], kd=r["kd"], vd=r["vd"], draft_kv=r["draft_kv"]) for r in rows
                if "divergence" in r for d in [r["divergence"]] if d.get("near_tie") is False]
         summ = {"n_spec_rows": sum(r["mode"] == "spec" for r in rows), "n_diverged": len(divs),
                 "n_near_tie": sum(d.get("near_tie") is True for d in divs), "n_bug_candidates": len(bad),
@@ -318,7 +326,7 @@ def main(argv=None):
             "main_metric": "fixed length n_new (EOS ignored)", "eos_stop_ids_secondary": eos_ids if a.eos_stop else None,
             "chat_forced_draft_vocab": not a.no_chat_forced, "cuda_visible_devices": __import__("os").environ.get("CUDA_VISIBLE_DEVICES"), "deterministic_splitk": not a.nondet, "dtype": "bf16", "T_max": T,
             "linear_bytes_per_token": {f"k{k}": m.linear_bytes(k) for k in range(1, m.L + 1)},
-            "lm_head_bytes": m.lm_head.numel() * 2, "vds": a.vds, "freq_dir": freq_dir,
+            "lm_head_bytes": m.lm_head.numel() * 2, "vds": a.vds, "draft_kv": a.draft_kv, "freq_dir": freq_dir,
             "draft_vocab_bytes": m.draft_vocab_bytes(), "draft_vocab_pileval_coverage": vd_cov},
             metrics={"rows": rows, "aggregate": agg, "tie_check": tie, "rows_eos_stop": rows_eos, "tie_check_eos_stop": tie_eos,
                      "lm_head_us": lm, "lm_head_share_of_ar_step": lm["M1"] / ar_step},

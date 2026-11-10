@@ -12,6 +12,13 @@ Spec : per round, with n = committed KV length (target cache valid for [0, n)), 
        verify graph : target forward M=gamma+1 on [cur, d_1..d_gamma] at positions n..n+gamma, argmax per row
        host         : a = matched prefix length; commit d_1..d_a + target token v_a; n += a + 1
        Rollback is implicit: stale KV beyond the committed length is masked (position mask) and later overwritten.
+draft_kv="shared" (D2, catch-up removal): the draft has no cache of its own and runs on the target cache. Positions
+       [0, n) hold target (k_t) KV written by earlier verifies; the draft steps write their own (k_d) KV at the
+       unconfirmed positions n..n+gamma-1, and the verify of the same round overwrites n..n+gamma with target KV
+       before any later read (each layer writes its KV before attending). So every round the draft processes only
+       cur (M=1): no catch-up step and no draft prefill. Verify inputs/outputs are computed exactly as in "own"
+       (it only reads positions it wrote itself in this forward plus committed target KV), so the output is
+       still exact greedy w.r.t. the target. The draft now attends to target KV for the context (not its own).
 Timing (Notion 03): decode wall = perf_counter over the decode loop (sync at end); draft / verify = CUDA-event time of
 the draft / verify graph replays; overhead = wall - draft - verify (host acceptance, buffer updates, launch gaps).
 Prefill is timed separately (eager forward, chunked mma).
@@ -131,12 +138,15 @@ class ARDecoder:
 
 class SpecDecoder:
     def __init__(self, model, T_max, gamma, k_draft, k_target=None, use_draft=False, vd=None, eos=None,
-                 record_logits=False):
+                 record_logits=False, draft_kv="own"):
+        assert draft_kv in ("own", "shared"), draft_kv
+        self.shared = draft_kv == "shared"
         self.m, self.g, self.kd, self.kt, self.use_draft, self.vd = model, gamma, k_draft, k_target, use_draft, vd
         self.vlog = torch.zeros(gamma + 1, model.lm_head.shape[0], dtype=model.dtype, device=model.device) \
             if record_logits else None
         self.eos = frozenset(int(e) for e in eos) if eos else None
-        self.tc, self.dc = model.new_cache(T_max), model.new_cache(T_max)
+        self.tc = model.new_cache(T_max)
+        self.dc = self.tc if self.shared else model.new_cache(T_max)
         dev = model.device
         self.n = torch.zeros((), dtype=torch.long, device=dev)       # committed length (pos of cur)
         self.buf = torch.zeros(gamma + 1, dtype=torch.long, device=dev)  # [cur, d_1..d_gamma]
@@ -144,7 +154,7 @@ class SpecDecoder:
         self.vout = torch.zeros(gamma + 1, dtype=torch.long, device=dev)
         self.n.fill_(1)  # warm-up/capture with valid positions (catch-up step writes position n-1)
         self.gd = _Graph(lambda: self._draft(False))
-        self.gdc = _Graph(lambda: self._draft(True))
+        self.gdc = None if self.shared else _Graph(lambda: self._draft(True))
         self.gv = _Graph(self._verify)
 
     def _draft(self, catch_up):
@@ -169,7 +179,8 @@ class SpecDecoder:
         _sync()
         t0 = time.perf_counter()
         logits = m.prefill(prompt, self.tc, self.kt, False)
-        m.prefill(prompt, self.dc, self.kd, self.use_draft)
+        if not self.shared:
+            m.prefill(prompt, self.dc, self.kd, self.use_draft)
         first = int(logits.argmax(-1))
         _sync()
         t_prefill = time.perf_counter() - t0
@@ -211,7 +222,7 @@ class SpecDecoder:
             if rec is not None:  # confirmed token k of this round = argmax of verify row k
                 rec.append(self.vlog[:len(new)].clone())
             accepted.append(a)
-            catch_up, prev_last = a == g, d[g - 1]
+            catch_up, prev_last = a == g and not self.shared, d[g - 1]
             n += a + 1
             cur = v[a]
             rounds += 1
