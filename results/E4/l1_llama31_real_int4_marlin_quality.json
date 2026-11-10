@@ -1,0 +1,139 @@
+{
+ "exp": "E4",
+ "run": "l1_llama31_real_int4_marlin_quality",
+ "time": "2026-11-10T18:26:24",
+ "commit": "681f852",
+ "dirty_files": 10,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "setting": "Llama-3.1-8B-Instruct quality: original (bf16/fp16) vs real INT4 Marlin (GPTQ g128 sym) vs C1 VQ",
+  "model": "/data/models/llama3.1_8b_instruct",
+  "files": {
+   "main": "/data/lsh/results_e4/int4_baseline/quality.json",
+   "int4dense": "/data/lsh/results_e4/int4_baseline/quality_int4dense.json",
+   "variant": null
+  },
+  "gptq_meta_main": {
+   "model": "/data/models/llama3.1_8b_instruct",
+   "format": "Marlin FP16xINT4, sym, group 128 (B int32 [K/16, N*2], s fp16 [K/128, N])",
+   "gptq_src": "/data/lsh/src/marlin @1f25790 gptq/gptq.py + quant.py",
+   "calibration": "pile_val (pile-val-backup, specrq/dbd/src/datautils.get_pile_val)",
+   "nsamples": 128,
+   "seqlen": 2048,
+   "seed": 0,
+   "percdamp": 0.1,
+   "groupsize": 128,
+   "clip": true,
+   "true_sequential": false,
+   "load_dtype": "float16",
+   "wall_s": 585.210458278656,
+   "pack_check_rel_err_max": 0.0006855280371382833,
+   "peak_mem_gib": 7.374600410461426
+  },
+  "ppl_protocol": "PPL@4096 wikitext2 test (70 windows) / c4 val (256 windows), specrq/dbd get_loaders + perplexity_eval math (final norm + lm_head in model dtype, CE)",
+  "kl_protocol": "40 x 512 windows wikitext2 test + c4 val (draft_target_eval.py), ref = original bf16",
+  "notes": "INT4 quality of record = int4dense (the same INT4 weights dequantized through the Marlin kernel at M=16 into dense fp16 linears; deterministic). main.ppl_4096_marlin / kl_bf16_vs_marlin are INVALID as quality numbers: they ran the original Marlin kernel at M=512/4096, where it returns wrong, non-reproducible outputs on our 4090 setup (rel err 3-7% vs the dequant reference for M>=48, exact ~3e-4 for M<=16; log /data/lsh/logs/e4_int4_followup2.log); kept only as evidence (wt2 7.6676 in a first run vs 7.6466 here)."
+ },
+ "metrics": {
+  "c1_vq_target_cited": {
+   "ppl_4096": {
+    "wikitext2": 6.9927,
+    "c4": 10.1423
+   },
+   "kl_bf16_vs_target": {
+    "wikitext2": {
+     "kl_ref_q": 0.042010627686977386,
+     "top1_ref_q": 0.9039139151573181,
+     "ppl_q": 9.616631507873535,
+     "ppl_ref": 9.298919677734375
+    },
+    "c4": {
+     "kl_ref_q": 0.060314737260341644,
+     "top1_ref_q": 0.8911448121070862,
+     "ppl_q": 11.13288688659668,
+     "ppl_ref": 10.553763389587402
+    }
+   },
+   "source": "results/E3/llama31_uniform_c1_had_pile_fp32_ft5_kd123.json + /data/lsh/results_accept/llama31_c1_uniform_kd3/eval/A_bf16.json (cited, not re-run)"
+  },
+  "main": {
+   "kl_ref": "bf16",
+   "ppl_4096_marlin": {
+    "wikitext2": 7.646617889404297,
+    "wikitext2_n_windows": 70,
+    "c4": 11.087285041809082,
+    "c4_n_windows": 256
+   },
+   "ppl_4096_bf16": {
+    "wikitext2": 6.753390789031982,
+    "wikitext2_n_windows": 70,
+    "c4": 9.750466346740723,
+    "c4_n_windows": 256
+   },
+   "ppl_4096_fp16": {
+    "wikitext2": 6.75197696685791,
+    "wikitext2_n_windows": 70,
+    "c4": 9.74431037902832,
+    "c4_n_windows": 256
+   },
+   "kl_bf16_vs_marlin": {
+    "wikitext2": {
+     "n_windows": 40,
+     "n_tokens": 20440,
+     "kl_ref_q": 0.12237099558115005,
+     "top1_ref_q": 0.8437867164611816,
+     "ppl_q": 10.284520149230957,
+     "ppl_ref": 9.298919677734375
+    },
+    "c4": {
+     "n_windows": 40,
+     "n_tokens": 20440,
+     "kl_ref_q": 0.1500903069972992,
+     "top1_ref_q": 0.8346868753433228,
+     "ppl_q": 11.773026466369629,
+     "ppl_ref": 10.553763389587402
+    }
+   }
+  },
+  "int4dense": {
+   "kl_ref": "bf16",
+   "ppl_4096_int4dense": {
+    "wikitext2": 7.142063140869141,
+    "wikitext2_n_windows": 70,
+    "c4": 10.380773544311523,
+    "c4_n_windows": 256
+   },
+   "kl_bf16_vs_int4dense": {
+    "wikitext2": {
+     "n_windows": 40,
+     "n_tokens": 20440,
+     "kl_ref_q": 0.07630347460508347,
+     "top1_ref_q": 0.8752935528755188,
+     "ppl_q": 9.876860618591309,
+     "ppl_ref": 9.298919677734375
+    },
+    "c4": {
+     "n_windows": 40,
+     "n_tokens": 20440,
+     "kl_ref_q": 0.10025402158498764,
+     "top1_ref_q": 0.8684442043304443,
+     "ppl_q": 11.327986717224121,
+     "ppl_ref": 10.553763389587402
+    }
+   }
+  }
+ },
+ "notes": ""
+}

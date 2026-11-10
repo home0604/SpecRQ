@@ -236,14 +236,45 @@ class MarlinLinear:
         self.s = (torch.rand(K // 128, N, device=device, generator=gen) * 2e-3 + 1e-3).half()
         self.ws = torch.zeros(N // 128 * 16, dtype=torch.int32, device=device)
 
+    @classmethod
+    def packed(cls, B, s, device):
+        """Real Marlin weights (B int32 [K/16, N*2], s fp16 [K/128, N]) as saved by experiments/13_int4_marlin."""
+        import marlin  # noqa: F401
+        self = cls.__new__(cls)
+        self.K, self.N = B.shape[0] * 16, s.shape[1]
+        self.L, self.hb, self.signs, self.draft, self.bias = 1, 1, None, {}, None
+        self.B, self.s = B.to(device).contiguous(), s.to(device, torch.float16).contiguous()
+        self.ws = torch.zeros(self.N // 128 * 16, dtype=torch.int32, device=device)
+        return self
+
+    MAX_M = 16  # original Marlin @1f25790 gives wrong, non-reproducible outputs for larger M on our 4090 setup
+    # (rel err 3-7% vs dequant reference for M >= 48, some shapes from M = 17; M <= 16 exact to ~3e-4), so larger
+    # inputs (prefill) are processed in 16-row chunks
+
     def __call__(self, x, k=None, use_draft=False, rotated=False):
         import marlin
         y = torch.empty(x.shape[0], self.N, dtype=x.dtype, device=x.device)
-        marlin.mul(x, self.B, y, self.s, self.ws)
+        for i in range(0, x.shape[0], self.MAX_M):
+            marlin.mul(x[i:i + self.MAX_M], self.B, y[i:i + self.MAX_M], self.s, self.ws)
         return y
 
     def nbytes(self, k=None):
         return self.N * self.K // 2 + self.s.numel() * 2
+
+
+class DenseLinear:
+    """Unquantized HF weight (cuBLAS F.linear) for the dense AR reference in the same runner."""
+
+    def __init__(self, W, device, dtype):
+        self.W = W.to(device, dtype).contiguous()
+        self.N, self.K = self.W.shape
+        self.L, self.hb, self.signs, self.draft, self.bias = 1, 1, None, {}, None
+
+    def __call__(self, x, k=None, use_draft=False, rotated=False):
+        return F.linear(x, self.W)
+
+    def nbytes(self, k=None):
+        return self.W.numel() * self.W.element_size()
 
 
 @dataclass
@@ -350,6 +381,54 @@ class NestModel:
         self.ckpt_dir = (f"synthetic:nestg {vq} hadamard={hadamard} seed={seed}" if vq is not None else
                          f"synthetic:C1 L={L} hadamard={hadamard} seed={seed}" if linear_impl == "nest"
                          else f"synthetic:Marlin INT4 g128 seed={seed}")
+        self.model_path = model_path
+        return self
+
+    @classmethod
+    def from_hf(cls, model_path, linear_impl, marlin_ckpt=None, device="cuda", dtype=torch.float16, verbose=True):
+        """Real-weight baselines on the same runner (glue, attention, KV, lm_head, CUDA graphs as the VQ model):
+        linear_impl="marlin": Marlin FP16 x INT4 linears from marlin_ckpt (experiments/13_int4_marlin/gptq_marlin.py
+        marlin_linears.pt; dtype must be float16); "dense": the unquantized HF linears (cuBLAS). embed / norms /
+        lm_head are the HF tensors cast to dtype."""
+        import json as _json
+        from safetensors import safe_open
+        from transformers import AutoConfig
+        assert linear_impl in ("marlin", "dense")
+        assert linear_impl != "marlin" or dtype == torch.float16, "Marlin is FP16 x INT4 only"
+        self = cls.__new__(cls)
+        self.cfg = cfg = AutoConfig.from_pretrained(model_path)
+        self.device, self.dtype = torch.device(device), dtype
+        self.n_layers, self.H, self.Hkv = cfg.num_hidden_layers, cfg.num_attention_heads, cfg.num_key_value_heads
+        self.D = getattr(cfg, "head_dim", None) or cfg.hidden_size // cfg.num_attention_heads
+        self.eps = cfg.rms_norm_eps
+        idx = _json.load(open(os.path.join(model_path, "model.safetensors.index.json")))["weight_map"]
+
+        def get(name):
+            with safe_open(os.path.join(model_path, idx[name]), framework="pt", device=str(self.device)) as f:
+                return f.get_tensor(name).to(dtype)
+        self.embed = get("model.embed_tokens.weight")
+        self.norm = get("model.norm.weight")
+        self.lm_head = get("lm_head.weight") if "lm_head.weight" in idx else self.embed
+        assert not (getattr(cfg, "attention_bias", False) or cfg.model_type == "qwen2"), "no-bias Llama only"
+        pk = torch.load(marlin_ckpt, map_location="cpu") if linear_impl == "marlin" else None
+        self.layers = []
+        for i in range(self.n_layers):
+            d = {"in_norm": get(f"model.layers.{i}.input_layernorm.weight"),
+                 "post_norm": get(f"model.layers.{i}.post_attention_layernorm.weight")}
+            for name in LINEARS:
+                key = f"model.layers.{i}.{name}"
+                if linear_impl == "marlin":
+                    d[name.split(".")[1]] = MarlinLinear.packed(pk[key + ".B"], pk[key + ".s"], self.device)
+                else:
+                    d[name.split(".")[1]] = DenseLinear(get(key + ".weight"), self.device, dtype)
+            self.layers.append(d)
+            if verbose and i % 8 == 0:
+                print(f"[infer] {linear_impl} layer {i}/{self.n_layers}", flush=True)
+        del pk
+        self.L = 1
+        self.inv_freq, self.rope_scaling = _rope_inv_freq(cfg, self.device)
+        self.use_compile, self.decode_attn, self._rope_len, self.fused_glue = True, "fp32", 0, True
+        self.ckpt_dir = marlin_ckpt if linear_impl == "marlin" else f"dense:{dtype}"
         self.model_path = model_path
         return self
 
