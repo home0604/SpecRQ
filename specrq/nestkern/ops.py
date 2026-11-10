@@ -9,7 +9,7 @@ os.environ.setdefault("CC", "/usr/bin/gcc-11")
 os.environ.setdefault("CXX", "/usr/bin/g++-11")
 os.environ.setdefault("NVCC_PREPEND_FLAGS", "-ccbin /usr/bin/g++-11")
 os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "8.9")
-os.environ.setdefault("TORCH_EXTENSIONS_DIR", "/data/lsh/torch_extensions")
+os.environ.setdefault("TORCH_EXTENSIONS_DIR", "/data/lsh/temp/torch_extensions")
 if "/usr/local/cuda-12.1/bin" not in os.environ.get("PATH", ""):
     os.environ["PATH"] = "/usr/local/cuda-12.1/bin:" + os.environ.get("PATH", "")
 

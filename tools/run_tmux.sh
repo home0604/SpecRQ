@@ -34,6 +34,7 @@ source /hai/anaconda3/etc/profile.d/conda.sh
 conda activate $ENV
 cd $REPO
 export HF_HOME=/data/lsh/hf_cache PYTHONUNBUFFERED=1
+T=/data/lsh/temp; export TMPDIR=\$T/tmp TORCHINDUCTOR_CACHE_DIR=\$T/inductor_cache TRITON_CACHE_DIR=\$T/triton_cache TORCH_EXTENSIONS_DIR=\$T/torch_extensions PIP_CACHE_DIR=\$T/pip_cache XDG_CACHE_HOME=\$T/xdg_cache
 $( [[ "$GPUS" != none ]] && echo "export CUDA_VISIBLE_DEVICES=$GPUS" )
 $CMD 2>&1 | tee -a $LOG
 rc=\${PIPESTATUS[0]}

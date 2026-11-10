@@ -12,7 +12,8 @@ scoped task, reviews your work, commits, and updates Notion. Read /hai/home/lsh/
 - **Never `git commit`.** Leave changes in the working tree; report the changed files and a short diff summary.
 - Never modify the `VQLLM_CUDA` env. Weight-VQ work uses env `nestvq`.
 - Storage: heavy outputs go to /data/lsh/{ckpts,logs,src,hf_cache} or /data/models; never the NAS.
-  `export HF_HOME=/data/lsh/hf_cache`.
+  `export HF_HOME=/data/lsh/hf_cache`. Temp files and compile caches go to /data/lsh/temp/* (run_tmux.sh sets them;
+  for commands outside tmux set TMPDIR=/data/lsh/temp/tmp yourself).
 - GPUs: check `nvidia-smi` first; use only GPUs with <2 GB in use. Pin with CUDA_VISIBLE_DEVICES.
 - **Jobs longer than ~2 minutes run in tmux** via
   `tools/run_tmux.sh <name> <gpus|none> <env> -- <cmd...>` (log/meta in /data/lsh/logs/<name>.*; list with

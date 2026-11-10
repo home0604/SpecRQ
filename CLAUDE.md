@@ -127,7 +127,10 @@ Checkpoint dir naming: `{both|key|value}_quant_Key_K[S]C[C]D[D]_Value_..._SubVec
 
 - **CUDA extension builds:** default `/usr/bin/g++` is gcc-12 without `cc1plus`. Build with
   `CC=/usr/bin/gcc-11 CXX=/usr/bin/g++-11 NVCC_PREPEND_FLAGS='-ccbin /usr/bin/g++-11' CUDA_HOME=/usr/local/cuda-12.1
-  TORCH_CUDA_ARCH_LIST=8.9`, `TORCH_EXTENSIONS_DIR=/data/lsh/torch_extensions`, `TRITON_CACHE_DIR=/data/lsh/triton_cache`.
+  TORCH_CUDA_ARCH_LIST=8.9`, `TORCH_EXTENSIONS_DIR=/data/lsh/temp/torch_extensions`, `TRITON_CACHE_DIR=/data/lsh/temp/triton_cache`.
+- **Temp and caches live in `/data/lsh/temp/`** (`tmp`, `inductor_cache`, `triton_cache`, `torch_extensions`, `pip_cache`,
+  `xdg_cache`; old `/data/lsh/<name>` paths are symlinks). `tools/run_tmux.sh` exports TMPDIR and these cache vars, because
+  the agent shell's TMPDIR points at the NAS and made torch compile slow.
 - **AQLM kernels loop over input rows on the host** (`cuda_kernel.cpp` matmat, `triton_kernel.py`), so their T(M) grows
   ~linearly in M; they cannot show verify-time amortization (E0, results/E0/e0_full_v1.json).
 
