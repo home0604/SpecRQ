@@ -138,8 +138,18 @@ class ARDecoder:
 
 class SpecDecoder:
     def __init__(self, model, T_max, gamma, k_draft, k_target=None, use_draft=False, vd=None, eos=None,
-                 record_logits=False, draft_kv="own"):
+                 record_logits=False, draft_kv="own", force_accept=None):
         assert draft_kv in ("own", "shared"), draft_kv
+        # DEBUG / timing only (None = normal greedy verify). ("p", p, seed): each round accepts a draft token with
+        # i.i.d. probability p until the first reject (a ~ truncated geometric); ("len", a): accept exactly
+        # min(a, gamma). The committed tokens are d_1..d_a + verify token v_a (target KV of exactly those tokens is
+        # already in the cache), so the loop does the same work as a real round with acceptance a, but the output is
+        # NOT the target's greedy output.
+        self.force = force_accept
+        if force_accept is not None:
+            import random
+            assert force_accept[0] in ("p", "len"), force_accept
+            self._frng = random.Random(force_accept[2] if force_accept[0] == "p" and len(force_accept) > 2 else 0)
         self.shared = draft_kv == "shared"
         self.m, self.g, self.kd, self.kt, self.use_draft, self.vd = model, gamma, k_draft, k_target, use_draft, vd
         self.vlog = torch.zeros(gamma + 1, model.lm_head.shape[0], dtype=model.dtype, device=model.device) \
@@ -210,6 +220,13 @@ class SpecDecoder:
             a = 0
             while a < g and d[a] == v[a]:
                 a += 1
+            if self.force is not None:
+                if self.force[0] == "len":
+                    a = min(int(self.force[1]), g)
+                else:
+                    a = 0
+                    while a < g and self._frng.random() < self.force[1]:
+                        a += 1
             new = d[:a] + [v[a]]
             if self.eos is not None:
                 cut = next((i for i, t in enumerate(new) if t in self.eos), None)

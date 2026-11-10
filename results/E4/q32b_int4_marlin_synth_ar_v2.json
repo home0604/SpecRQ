@@ -1,0 +1,190 @@
+{
+ "exp": "E4",
+ "run": "q32b_int4_marlin_synth_ar_v2",
+ "time": "2026-11-10T19:31:38",
+ "commit": "d02d3a1",
+ "dirty_files": 8,
+ "host": "shark",
+ "cuda_visible_devices": "1",
+ "tmux_job": "sr-q32b_marlin_ar_v2",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_32b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-32B-Instruct\nrevision=5ede1c97bbab6ce5cda5812749b4c0bdf79b18dd",
+ "config": {
+  "setting": "SYNTHETIC Qwen2.5-32B-Instruct: Marlin FP16xINT4 g128 random linears + random fp16 qkv bias, fp16 embed/lm_head; AR only; timing only",
+  "model": "/data/models/qwen2.5_32b_instruct",
+  "mode": "marlin",
+  "d": 8,
+  "K": 256,
+  "L": null,
+  "kt": 1,
+  "kd": 1,
+  "P": 128,
+  "n_new": 512,
+  "repeats": 3,
+  "gammas": [
+   1,
+   2,
+   3,
+   4
+  ],
+  "ps": [
+   0.5,
+   0.6,
+   0.7,
+   0.8,
+   0.9
+  ],
+  "vd": 32768,
+  "grid_vds": [
+   32768,
+   0
+  ],
+  "draft_kv": "shared",
+  "dtype": "torch.float16",
+  "deterministic_splitk": true,
+  "decode_attn": "fp32 compiled",
+  "T_max": 668,
+  "cuda_visible_devices": "1",
+  "co_tenant_start": "none",
+  "co_tenant_end": "none",
+  "gpu_util_start": "0 %, 3 MiB",
+  "gpu_util_end": "18 %, 21052 MiB",
+  "force_accept_note": "SpecDecoder(force_accept=...): acceptance length forced on the host; draft/verify graphs and the loop are the real ones; output is not target-greedy"
+ },
+ "metrics": {
+  "load": {
+   "load_s": 73.55952024459839,
+   "gpu_mem_alloc_gb": 19.344321024,
+   "lm_head_bytes": 1557135360,
+   "embed_bytes": 1557135360,
+   "tied_lm_head": false,
+   "linear_bytes_per_token": {
+    "k1": 16090398720
+   }
+  },
+  "ar": [
+   {
+    "k": null,
+    "vd": null,
+    "step_us": {
+     "median": 22974.183755596907,
+     "min": 22959.9527201803,
+     "max": 22976.765583165412,
+     "n": 3
+    },
+    "tokens_per_s": {
+     "median": 43.527117682968075,
+     "min": 43.522226676355125,
+     "max": 43.55409665635179,
+     "n": 3
+    },
+    "prefill_s": {
+     "median": 0.16833653394132853,
+     "min": 0.16783275990746915,
+     "max": 0.16860152897424996,
+     "n": 3
+    }
+   }
+  ],
+  "fwd": [
+   {
+    "k": 1,
+    "vd": null,
+    "M": 1,
+    "us": {
+     "median": 22979.379272460938,
+     "min": 22978.713989257812,
+     "max": 22992.332458496094,
+     "n": 5
+    }
+   },
+   {
+    "k": 1,
+    "vd": null,
+    "M": 2,
+    "us": {
+     "median": 23646.719360351562,
+     "min": 23633.663940429688,
+     "max": 23653.170776367188,
+     "n": 5
+    }
+   },
+   {
+    "k": 1,
+    "vd": null,
+    "M": 3,
+    "us": {
+     "median": 23866.82891845703,
+     "min": 23865.753173828125,
+     "max": 23879.47540283203,
+     "n": 5
+    }
+   },
+   {
+    "k": 1,
+    "vd": null,
+    "M": 4,
+    "us": {
+     "median": 24194.34356689453,
+     "min": 24194.20166015625,
+     "max": 24207.667541503906,
+     "n": 5
+    }
+   },
+   {
+    "k": 1,
+    "vd": null,
+    "M": 5,
+    "us": {
+     "median": 24730.828857421875,
+     "min": 24729.278564453125,
+     "max": 24740.505981445312,
+     "n": 5
+    }
+   }
+  ],
+  "lm_head": {
+   "full_M1": {
+    "median": 1637.68310546875,
+    "min": 1637.615966796875,
+    "max": 1638.604736328125,
+    "n": 5
+   },
+   "full_M2": {
+    "median": 1639.788818359375,
+    "min": 1639.5439147949219,
+    "max": 1639.833641052246,
+    "n": 5
+   },
+   "full_M3": {
+    "median": 1642.4959182739258,
+    "min": 1642.2399520874023,
+    "max": 1643.2687759399414,
+    "n": 5
+   },
+   "full_M4": {
+    "median": 1646.1311340332031,
+    "min": 1645.359992980957,
+    "max": 1647.0943450927734,
+    "n": 5
+   },
+   "full_M5": {
+    "median": 1648.1391906738281,
+    "min": 1647.871971130371,
+    "max": 1648.5376358032227,
+    "n": 5
+   }
+  },
+  "spec": [],
+  "peak_mem_gib": 18.420418739318848
+ },
+ "notes": ""
+}
