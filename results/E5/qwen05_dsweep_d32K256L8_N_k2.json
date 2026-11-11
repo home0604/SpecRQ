@@ -1,0 +1,326 @@
+{
+ "exp": "E5",
+ "run": "qwen05_dsweep_d32K256L8_N_k2",
+ "time": "2026-11-11T07:21:29",
+ "commit": "8758c6b",
+ "dirty_files": 16,
+ "host": "shark",
+ "cuda_visible_devices": "1",
+ "tmux_job": "sr-e5_dsweep_d32K256L8_N_k2",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "cfg": "d32K256L8",
+  "d": 32,
+  "K": 256,
+  "L": 8,
+  "objective": "N_k2",
+  "codebook_weights": [
+   0.0,
+   0.5,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.5
+  ],
+  "ckpt": "/data/lsh/ckpts/weightvq/dsweep/d32K256L8_N_k2",
+  "setting": "Hadamard, nested alpha 0 0.5 0 0 0 0 0 0.5, wikitext2 1024x4096 calib (val 32), accum fp64, AQ max_epochs 1000 / rel_tol 0.01, beam 1, NO block fine-tune (--finetune_max_epochs 0); activations on GPU (no --offload_activations)",
+  "eval": "PPL@4096 wt2/c4 (main.py, every prefix k); KL/top-1 = draft_target_eval.py kt=L kd=1: 40x512 wt2 + 40x512 c4 windows; copy draft A kd=2 4: draft_target_eval kt=L --no_fp16 (TV/top-1 40x512 windows, greedy 8 chat + 8 wt2 prompts x 128 tok)",
+  "log": "/data/lsh/logs/e5_dsweep_d32K256L8_N_k2.log",
+  "scripts": [
+   "experiments/15_dsweep/run_dsweep.sh",
+   "experiments/15_dsweep/save_dsweep.py"
+  ]
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k8": 39.4774,
+   "wikitext2_k7": 565.5262,
+   "wikitext2_k6": 12107.0205,
+   "wikitext2_k5": 259747.5312,
+   "wikitext2_k4": 3161664.0,
+   "wikitext2_k3": 15882.0537,
+   "wikitext2_k2": 27518.1992,
+   "wikitext2_k1": 581852.6875,
+   "c4_k8": 68.4814,
+   "c4_k7": 1077.4591,
+   "c4_k6": 17962.1211,
+   "c4_k5": 279776.9688,
+   "c4_k4": 2863845.5,
+   "c4_k3": 18390.3281,
+   "c4_k2": 30569.5234,
+   "c4_k1": 633263.9375
+  },
+  "target_bpw": {
+   "index_bpw": 2.0,
+   "bpw_with_codebooks_scales": 2.5059065934065936
+  },
+  "prefix_bpw": {
+   "1": {
+    "index_bpw": 0.25,
+    "bpw_with_codebooks_scales": 0.32513736263736265
+   },
+   "2": {
+    "index_bpw": 0.5,
+    "bpw_with_codebooks_scales": 0.6366758241758241
+   },
+   "3": {
+    "index_bpw": 0.75,
+    "bpw_with_codebooks_scales": 0.9482142857142857
+   },
+   "4": {
+    "index_bpw": 1.0,
+    "bpw_with_codebooks_scales": 1.2597527472527472
+   },
+   "5": {
+    "index_bpw": 1.25,
+    "bpw_with_codebooks_scales": 1.5712912087912088
+   },
+   "6": {
+    "index_bpw": 1.5,
+    "bpw_with_codebooks_scales": 1.8828296703296703
+   },
+   "7": {
+    "index_bpw": 1.75,
+    "bpw_with_codebooks_scales": 2.194368131868132
+   },
+   "8": {
+    "index_bpw": 2.0,
+    "bpw_with_codebooks_scales": 2.5059065934065936
+   }
+  },
+  "layer_time_s": [
+   321.66784620285034,
+   297.6351366043091,
+   407.8278088569641,
+   354.2442545890808,
+   295.22934579849243,
+   309.5276720523834,
+   298.4542016983032,
+   303.8043746948242,
+   308.47577142715454,
+   298.62872672080994,
+   302.9107663631439,
+   319.95151591300964,
+   301.78423714637756,
+   302.76614356040955,
+   297.59406566619873,
+   307.11368060112,
+   292.12827229499817,
+   305.4925742149353,
+   301.4923279285431,
+   317.6223998069763,
+   308.18296098709106,
+   333.649845123291,
+   309.3434464931488,
+   420.7525591850281
+  ],
+  "out_loss": [
+   0.11109615117311478,
+   0.0377829484641552,
+   0.081122487783432,
+   0.01721382513642311,
+   0.01667843945324421,
+   0.013467214070260525,
+   0.011087636463344097,
+   0.013005838729441166,
+   0.009722256101667881,
+   0.013282932341098785,
+   0.009807965718209743,
+   0.018962286412715912,
+   0.009278910234570503,
+   0.011518356390297413,
+   0.010890918783843517,
+   0.012352844700217247,
+   0.02094760723412037,
+   0.008700933307409286,
+   0.008424423635005951,
+   0.009878763929009438,
+   0.01128469966351986,
+   0.010180927813053131,
+   0.010265526361763477,
+   0.014112284407019615
+  ],
+  "out_val_loss": [
+   0.10955947637557983,
+   0.03748735412955284,
+   0.07515301555395126,
+   0.015575486235320568,
+   0.015317059122025967,
+   0.012867390178143978,
+   0.010551475919783115,
+   0.012573011219501495,
+   0.009362850338220596,
+   0.012810883112251759,
+   0.009419256821274757,
+   0.01863652653992176,
+   0.008803002536296844,
+   0.011177796870470047,
+   0.010522555559873581,
+   0.012172958813607693,
+   0.02062799222767353,
+   0.008690212853252888,
+   0.008619709871709347,
+   0.009953409433364868,
+   0.011396672576665878,
+   0.010429730638861656,
+   0.010497719049453735,
+   0.01405059639364481
+  ],
+  "train_wall_s": 7946.0,
+  "train_peak_rss_gib": 3.0251235961914062,
+  "target_quality": {
+   "wikitext2": {
+    "ppl_target": 55.29657745361328,
+    "ppl_fp16": 18.12192153930664,
+    "kl_fp16_target": 1.206838607788086,
+    "top1_fp16_target": 0.5053815841674805
+   },
+   "c4": {
+    "ppl_target": 84.5496826171875,
+    "ppl_fp16": 20.124181747436523,
+    "kl_fp16_target": 1.5119688510894775,
+    "top1_fp16_target": 0.4265166223049164
+   }
+  },
+  "eval_json": "/data/lsh/results_accept/dsweep/d32K256L8_N_k2/eval/A_bf16.json",
+  "kd": {
+   "2": {
+    "bpw": {
+     "index_bpw": 0.5,
+     "bpw_with_codebooks_scales": 0.6366758241758241
+    },
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.923027753829956,
+      "accept_prob_1mTV": 0.07697224617004395,
+      "top1_agree": 0.007534246426075697,
+      "kl_t_d": 6.318932056427002,
+      "kl_d_t": 6.543900012969971,
+      "ppl_target": 55.29657745361328,
+      "ppl_draft": 32773.140625
+     },
+     "c4": {
+      "tv_mean": 0.9162294864654541,
+      "accept_prob_1mTV": 0.0837705135345459,
+      "top1_agree": 0.00538160465657711,
+      "kl_t_d": 5.906943321228027,
+      "kl_d_t": 6.319918632507324,
+      "ppl_target": 84.5496826171875,
+      "ppl_draft": 41020.45703125
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.0,
+       "g1_tok_per_iter": 1.0,
+       "g2_tok_per_iter": 1.0,
+       "g4_tok_per_iter": 1.0
+      },
+      "wikitext2": {
+       "match_rate": 0.02734375,
+       "g1_tok_per_iter": 1.0281124497991967,
+       "g2_tok_per_iter": 1.0281124497991967,
+       "g4_tok_per_iter": 1.0281124497991967
+      },
+      "target_consistency": 0.99609375
+     },
+     "eval_json": "/data/lsh/results_accept/dsweep/d32K256L8_N_k2/kd2/eval/A_bf16.json"
+    }
+   },
+   "4": {
+    "bpw": {
+     "index_bpw": 1.0,
+     "bpw_with_codebooks_scales": 1.2597527472527472
+    },
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.9783708453178406,
+      "accept_prob_1mTV": 0.021629154682159424,
+      "top1_agree": 0.0012230919674038887,
+      "kl_t_d": 10.203253746032715,
+      "kl_d_t": 10.414908409118652,
+      "ppl_target": 55.29657745361328,
+      "ppl_draft": 1745795.25
+     },
+     "c4": {
+      "tv_mean": 0.9801377654075623,
+      "accept_prob_1mTV": 0.019862234592437744,
+      "top1_agree": 0.0001467710389988497,
+      "kl_t_d": 10.28275203704834,
+      "kl_d_t": 10.362069129943848,
+      "ppl_target": 84.5496826171875,
+      "ppl_draft": 3646216.0
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.0,
+       "g1_tok_per_iter": 1.0,
+       "g2_tok_per_iter": 1.0,
+       "g4_tok_per_iter": 1.0
+      },
+      "wikitext2": {
+       "match_rate": 0.0,
+       "g1_tok_per_iter": 1.0,
+       "g2_tok_per_iter": 1.0,
+       "g4_tok_per_iter": 1.0
+      },
+      "target_consistency": 0.99609375
+     },
+     "eval_json": "/data/lsh/results_accept/dsweep/d32K256L8_N_k2/kd4/eval/A_bf16.json"
+    }
+   }
+  },
+  "table": [
+   {
+    "cfg": "d32K256L8",
+    "obj": "N_k2",
+    "kd": 2,
+    "draft": "A",
+    "index_bpw": 0.5,
+    "bpw_with_codebooks_scales": 0.6366758241758241,
+    "wt2_tv": 0.923027753829956,
+    "wt2_top1": 0.007534246426075697,
+    "c4_tv": 0.9162294864654541,
+    "c4_top1": 0.00538160465657711,
+    "tau_instruct_g1": 1.0,
+    "tau_instruct_g2": 1.0,
+    "tau_instruct_g4": 1.0,
+    "tau_wikitext2_g1": 1.0281124497991967,
+    "tau_wikitext2_g2": 1.0281124497991967,
+    "tau_wikitext2_g4": 1.0281124497991967,
+    "ppl4096_wt2_k": 27518.1992
+   },
+   {
+    "cfg": "d32K256L8",
+    "obj": "N_k2",
+    "kd": 4,
+    "draft": "A",
+    "index_bpw": 1.0,
+    "bpw_with_codebooks_scales": 1.2597527472527472,
+    "wt2_tv": 0.9783708453178406,
+    "wt2_top1": 0.0012230919674038887,
+    "c4_tv": 0.9801377654075623,
+    "c4_top1": 0.0001467710389988497,
+    "tau_instruct_g1": 1.0,
+    "tau_instruct_g2": 1.0,
+    "tau_instruct_g4": 1.0,
+    "tau_wikitext2_g1": 1.0,
+    "tau_wikitext2_g2": 1.0,
+    "tau_wikitext2_g4": 1.0,
+    "ppl4096_wt2_k": 3161664.0
+   }
+  ]
+ },
+ "notes": ""
+}
