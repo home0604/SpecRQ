@@ -3,7 +3,9 @@
 # Each step is its own tmux job (tools/run_tmux.sh); this script only launches and waits.
 #   0) wait for WAIT_JOB (32B eval) to exit and for cgroup anon+shmem < MEM_START_GIB
 #   1) probe: layer 0, d8K256L2 T, NSAMPLES=1024 OFFLOAD=pinned (GPU TRAIN_GPU)
-#   env TRAIN_GPU / TRAIN_CPUS (taskset list) / EVAL_GPUS (gpu,gpu_ref) / RUNS (cfg:d:nbits:L:obj ...)
+#   env TRAIN_GPU / TRAIN_CPUS (taskset list) / EVAL_GPUS (gpu,gpu_ref | gpu with REF_MAXMEM) / RUNS (cfg:d:nbits:L:obj ...)
+#   REF_MAXMEM e.g. "0:5GiB,cpu:40GiB": single-GPU eval, bf16 reference partly on the CPU (run_llama_eval.sh)
+#   Re-running the chain re-attaches to already launched jobs (waits for them, then evals).
 #   2) per run in RUNS: train on TRAIN_GPU, then KL/top-1 eval on EVAL_GPUS (async; next training starts right away)
 # Usage: tools/run_tmux.sh e5_lds_chain none nestvq -- bash experiments/15_dsweep/llama_n1024_chain.sh
 set -uo pipefail
@@ -30,14 +32,18 @@ fi
 for r in $RUNS; do
   IFS=: read -r cfg d nb L obj <<<"$r"
   job=e5_lds_${cfg}_${obj}_n1024
-  [[ -n "$(exitcode $job)" ]] && { echo "[chain] $job already done"; continue; }
-  waitmem; waitgpu $TRAIN_GPU
-  tools/run_tmux.sh $job $TRAIN_GPU nestvq -- env NSAMPLES=1024 OFFLOAD=pinned SFX=_n1024 \
-    $NUMA1 bash experiments/15_dsweep/run_llama_dsweep.sh $cfg $d $nb $L $obj || { echo "[chain] launch $job failed"; continue; }
+  if [[ -e $LOGS/$job.meta.json ]]; then  # started by an earlier chain instance: re-attach (wait), eval if not done yet
+    echo "[chain] $job already launched; waiting"
+  else
+    waitmem; waitgpu $TRAIN_GPU
+    tools/run_tmux.sh $job $TRAIN_GPU nestvq -- env NSAMPLES=1024 OFFLOAD=pinned SFX=_n1024 \
+      $NUMA1 bash experiments/15_dsweep/run_llama_dsweep.sh $cfg $d $nb $L $obj || { echo "[chain] launch $job failed"; continue; }
+  fi
   waitjob $job
+  [[ -e $LOGS/e5_lds_eval_${cfg}_${obj}_n1024.meta.json ]] && { echo "[chain] eval of $job already launched"; continue; }
   if [[ "$(exitcode $job)" == 0 ]]; then
     ( waitgpu $EVAL_GPUS
-      tools/run_tmux.sh e5_lds_eval_${cfg}_${obj}_n1024 $EVAL_GPUS nestvq -- env NSAMPLES=1024 SFX=_n1024 \
+      tools/run_tmux.sh e5_lds_eval_${cfg}_${obj}_n1024 $EVAL_GPUS nestvq -- env NSAMPLES=1024 SFX=_n1024 REF_MAXMEM=${REF_MAXMEM:-} \
         $NUMA0 bash experiments/15_dsweep/run_llama_eval.sh $cfg $d $nb $L $obj ) &
   fi
 done

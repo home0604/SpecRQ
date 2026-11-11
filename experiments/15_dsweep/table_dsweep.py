@@ -25,7 +25,7 @@ def load():
                      "top1_wt2": tq.get("wikitext2", {}).get("top1_fp16_target"),
                      "top1_c4": tq.get("c4", {}).get("top1_fp16_target"),
                      "train_h": sum(m.get("layer_time_s", [])) / 3600 or None,
-                     "_m": m, "_c": c, "_r": r["run"]})
+                     "_m": m, "_c": c, "_r": r["run"], "run": r["run"].split("_dsweep_", 1)[-1]})
     return rows
 
 
@@ -43,7 +43,7 @@ def emit(hdr, rows, md):
 def main():
     md = "--md" in sys.argv
     rows = load()
-    hdr = ["cfg", "obj", "L", "index_bpw", "bpw_incl", "ppl_wt2", "ppl_c4", "kl_wt2", "kl_c4", "top1_wt2", "top1_c4", "train_h"]
+    hdr = ["run", "obj", "L", "index_bpw", "bpw_incl", "ppl_wt2", "ppl_c4", "kl_wt2", "kl_c4", "top1_wt2", "top1_c4", "train_h"]
     for b in sorted({x["bits"] for x in rows}):
         print(f"\n### {b}-bit (index)\n")
         emit(hdr, sorted([x for x in rows if x["bits"] == b and not x["_r"].endswith("_kd24")], key=lambda x: (x["cfg"].startswith("gptq"), x["_c"].get("K", 0), x["L"] if isinstance(x["L"], int) else 0, x["obj"], x["_r"])), md)

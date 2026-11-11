@@ -9,6 +9,7 @@
 #            file (--offload_activations with the large host buffers as file-backed mmaps in /data/lsh/temp/offload;
 #            same values/dtype, pageable instead of pinned RAM)
 #   SFX   ckpt / run suffix (e.g. _n1024)
+#   FT_EPOCHS block fine-tune epochs (default 0; 5 = C1 recipe: batch 32, lr 1e-5 default, early stop 3, keep best)
 #   EVALK prefixes evaluated by the training process (default: L..1)
 #   LAYERS=n: quantize only the first n layers (probe), separate ckpt dir.
 # Usage: tools/run_tmux.sh <name> <gpu> nestvq -- <cpu prefix> bash experiments/15_dsweep/run_llama_dsweep.sh <cfg> <d> <nbits> <L> [OBJ]
@@ -28,14 +29,14 @@ case $OFF in
 esac
 EVALK=${EVALK:-$(seq $L -1 1 | tr '\n' ' ')}
 if [[ -n "${LAYERS:-}" ]]; then
-  CKPT=$ROOT/probe/${CFG}_${OBJ}_n${NS}_${OFF}_l${LAYERS}; rm -rf "$CKPT"; mkdir -p "$(dirname "$CKPT")"
+  CKPT=$ROOT/probe/${CFG}_${OBJ}_n${NS}_${OFF}_ft${FT_EPOCHS:-0}_l${LAYERS}; rm -rf "$CKPT"; mkdir -p "$(dirname "$CKPT")"
   EXTRA="--quantize_num_layers $LAYERS"
 else
   CKPT=$ROOT/${CFG}_${OBJ}${SFX}; EXTRA="--eval_num_codebooks $EVALK"
   [[ -e "$CKPT" ]] && { echo "refusing to overwrite $CKPT"; exit 1; }
   mkdir -p "$ROOT"
 fi
-echo "[llama-dsweep] $CFG obj=$OBJ d=$D nbits=$NB L=$L CBW=$CBW nsamples=$NS offload=$OFF layers=${LAYERS:-all} $(date -Is)"
+echo "[llama-dsweep] $CFG obj=$OBJ d=$D nbits=$NB L=$L CBW=$CBW nsamples=$NS offload=$OFF ft=${FT_EPOCHS:-0} layers=${LAYERS:-all} $(date -Is)"
 ( while true; do echo "$(date +%s) $(nvidia-smi --query-gpu=memory.used --format=csv,noheader -i ${CUDA_VISIBLE_DEVICES%%,*}) cg=$(( $(cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/memory.current) >> 30 ))G $(grep -E '^(anon|shmem|file) ' /sys/fs/cgroup/user.slice/user-$(id -u).slice/memory.stat | awk '{printf "%s=%dG ",$1,$2/2^30}')"; sleep 30; done ) > $CKPT.mem.log 2>&1 &
 MON=$!
 trap "kill $MON 2>/dev/null || true" EXIT
@@ -43,6 +44,6 @@ trap "kill $MON 2>/dev/null || true" EXIT
   --nsamples=$NS --val_size=32 --model_seqlen=4096 \
   --num_codebooks=$L --nbits_per_codebook=$NB --in_group_size=$D --out_group_size=1 \
   --codebook_weights $CBW --hadamard --accum_dtype float32 --relative_mse_tolerance=0.01 \
-  --finetune_batch_size=32 --finetune_max_epochs=0 --finetune_early_stop=3 --finetune_keep_best \
+  --finetune_batch_size=32 --finetune_max_epochs=${FT_EPOCHS:-0} --finetune_early_stop=3 --finetune_keep_best \
   --local_batch_size=1 $OFFL --devices cuda:0 $EXTRA --save $CKPT)
 echo "[llama-dsweep] done $CFG $OBJ $(date -Is)"

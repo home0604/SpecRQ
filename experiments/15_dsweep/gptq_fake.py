@@ -138,7 +138,9 @@ def kl_eval(q, ref, model_path, dev, n_windows=40, seqlen=512, rdev=None):
         acc = {k: [] for k in ("kl", "top1", "nll_q", "nll_ref")}
         for i in range(n):
             ids = enc[:, i * seqlen:(i + 1) * seqlen].to(dev)
-            lq, lr = q(ids).logits.float()[0][:-1], ref(ids.to(rdev or dev)).logits.float()[0][:-1].to(dev)
+            lq = q(ids).logits.float()[0][:-1]
+            lr = (ref[name][i].to(dev).float() if isinstance(ref, dict)
+                  else ref(ids.to(rdev or dev)).logits.float()[0][:-1].to(dev))
             y = ids[0, 1:]
             pr, lpr, lpq = lr.softmax(-1), lr.log_softmax(-1), lq.log_softmax(-1)
             acc["kl"].append((pr * (lpr - lpq)).sum(-1).cpu())
@@ -167,6 +169,9 @@ def main():
     ap.add_argument("--save_result", action="store_true")
     ap.add_argument("--calib", default="wikitext2", help="wikitext2 (Qwen sweep) or pile_val (Llama, CLAUDE.md)")
     ap.add_argument("--ref_device", default=None, help="device of the bf16 KL reference (default: same GPU)")
+    ap.add_argument("--ref_logits_cpu", action="store_true",
+                    help="single GPU: after PPL, move the quantized model to the CPU, compute the bf16 reference logits "
+                         "on the GPU and keep them on the CPU (bf16, exact lm_head output), then evaluate KL")
     ap.add_argument("--run_name", default=None, help="result name (default qwen05_dsweep_gptq_int<b>)")
     ap.add_argument("--model_tag", default="Qwen2.5-0.5B-Instruct")
     ap.add_argument("--no_quant", action="store_true", help="reference: evaluate the original bf16 model (PPL@4096 only)")
@@ -192,7 +197,18 @@ def main():
     model.to(dev)
     ppl = ppl_eval(model, a.model, dev)
     rdev = torch.device(a.ref_device) if a.ref_device else dev
-    ref = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.bfloat16, attn_implementation="sdpa").to(rdev).eval()
+    if a.ref_logits_cpu:
+        model.cpu(); torch.cuda.empty_cache()
+        r = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.bfloat16, attn_implementation="sdpa").to(dev).eval()
+        ref = {}
+        with torch.no_grad():
+            for name in ("wikitext2", "c4"):
+                enc = get_loaders(name, seed=0, model_path=a.model, seqlen=512, eval_mode=True)
+                n = min(40, enc.numel() // 512)
+                ref[name] = [r(enc[:, i * 512:(i + 1) * 512].to(dev)).logits[0][:-1].to(torch.bfloat16).cpu() for i in range(n)]
+        del r; torch.cuda.empty_cache(); model.to(dev)
+    else:
+        ref = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.bfloat16, attn_implementation="sdpa").to(rdev).eval()
     kl = kl_eval(model, ref, a.model, dev, rdev=rdev)
     lin_shapes = [(m.out_features, m.in_features) for n, m in model.model.layers[0].named_modules()
                   if n in LINEARS]

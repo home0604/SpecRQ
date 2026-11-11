@@ -50,6 +50,7 @@ def main():
     ap.add_argument("--kd_root", default=None)
     ap.add_argument("--run_suffix", default="")
     ap.add_argument("--arch", default="qwen05", choices=["qwen05", "llama31"])
+    ap.add_argument("--ft_epochs", type=int, default=0)
     ap.add_argument("--calib_note", default="pile_val 192x4096 calib (val 32), accum fp32")
     a = ap.parse_args()
     global bpw
@@ -90,6 +91,10 @@ def main():
            "log": a.log, "scripts": ["experiments/15_dsweep/run_dsweep.sh", "experiments/15_dsweep/save_dsweep.py"]}
     if a.arch == "llama31":
         cfg["setting"] = cfg["setting"].replace("wikitext2 1024x4096 calib (val 32), accum fp64", a.calib_note)
+    if a.ft_epochs:
+        cfg["setting"] = cfg["setting"].replace("NO block fine-tune (--finetune_max_epochs 0)",
+                                                f"block fine-tune {a.ft_epochs} epochs (C1 recipe: batch 32, lr 1e-5, early stop 3, keep best)")
+        cfg["ft_epochs"] = a.ft_epochs
     p = save_result("E5", f"{a.arch}_dsweep_{a.cfg}_{a.obj}{a.run_suffix}", cfg, m, model_dir="/data/models/qwen2.5_0.5b_instruct" if a.arch == "qwen05" else "/data/models/llama3.1_8b_instruct")
     print(p)
     print(json.dumps({k: m[k] for k in ("ppl_4096", "target_bpw", "target_quality")}))
