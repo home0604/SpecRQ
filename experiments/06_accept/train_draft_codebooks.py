@@ -65,6 +65,9 @@ def main():
     ap.add_argument("--checkpoint_linears", action="store_true",
                     help="recompute each QuantizedLinear forward in backward (QuantizedLinear.use_checkpoint) so dequantized "
                          "weights are not kept for all layers (Llama-8B OOM otherwise); gradients unchanged")
+    ap.add_argument("--checkpoint_layers", action="store_true",
+                    help="[specrq] recompute each decoder layer in backward (torch.utils.checkpoint, non-reentrant) so "
+                         "only layer inputs are kept (Qwen-32B); gradients unchanged")
     a = ap.parse_args()
     torch.manual_seed(a.seed)
     os.makedirs(a.out, exist_ok=True)
@@ -77,6 +80,15 @@ def main():
         for m in model.modules():
             if isinstance(m, QuantizedLinear):
                 m.use_checkpoint = True
+    if a.checkpoint_layers:
+        import functools
+        from torch.utils.checkpoint import checkpoint
+        for layer in model.model.layers:
+            f = layer.forward
+            layer.forward = functools.partial(
+                lambda f, *x, **kw: checkpoint(f, *x, use_reentrant=False, **kw) if torch.is_grad_enabled() else f(*x, **kw), f)
+        model.config.use_cache = False  # a KV cache would be appended again on recompute
+        print("checkpointing", len(model.model.layers), "decoder layers")
     for p in model.parameters():
         p.requires_grad_(False)
     n_train = attach_draft_codebooks(model, a.kd, train_scales=not a.no_train_scales)

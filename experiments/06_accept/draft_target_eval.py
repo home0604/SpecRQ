@@ -101,6 +101,10 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--codes_uint8", action="store_true", help="store 8-bit codes as uint8 (memory; outputs unchanged)")
     ap.add_argument("--ref_device", default="cuda:0", help="device of the FP16 reference model")
+    ap.add_argument("--ref_max_memory", default=None,
+                    help="[specrq] dispatch the FP16 reference with accelerate device_map='auto' under this budget, e.g. "
+                         "'1:21GiB,cpu:150GiB' (large models; CPU part is offloaded per forward); default: whole model on "
+                         "--ref_device (unchanged)")
     a = ap.parse_args()
     dev = torch.device("cuda:0")
     t0 = time.time()
@@ -112,7 +116,15 @@ def main():
     if a.draft:
         from src.draft import load_draft_state_dict
         print("loaded draft copies for", load_draft_state_dict(q, torch.load(a.draft)), "linears")
-    ref = None if a.no_fp16 else AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=q.dtype).to(a.ref_device).eval()
+    if a.no_fp16:
+        ref = None
+    elif a.ref_max_memory:
+        mm = {(k if k == "cpu" else int(k)): v for k, v in (x.split(":") for x in a.ref_max_memory.split(","))}
+        ref = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=q.dtype, device_map="auto", max_memory=mm).eval()
+        a.ref_device = str(ref.get_input_embeddings().weight.device)
+        print("ref dispatched:", sorted(set(map(str, ref.hf_device_map.values()))), "input device", a.ref_device)
+    else:
+        ref = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=q.dtype).to(a.ref_device).eval()
     res = {"model": a.model, "ckpt": a.ckpt, "draft": a.draft, "kd": a.kd, "kt": a.kt, "seqlen": a.seqlen}
 
     # ---- teacher-forced corpus metrics ----

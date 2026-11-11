@@ -5,8 +5,13 @@ assert os.environ.get("HF_HOME") == "/data/lsh/hf_cache", os.environ.get("HF_HOM
 JOBS = [
     ("Qwen/Qwen2.5-0.5B-Instruct", "/data/models/qwen2.5_0.5b_instruct", "7ae557604adf67be50417f59c2c2f167def9a775"),
     ("meta-llama/Llama-3.1-8B-Instruct", "/data/models/llama3.1_8b_instruct", "0e9e39f249a16976918f6564b8830bc894c89659"),
+    ("Qwen/Qwen2.5-32B-Instruct", "/data/models/qwen2.5_32b_instruct", "5ede1c97bbab6ce5cda5812749b4c0bdf79b18dd"),
 ]
+# optional argv: repo ids to download (default: all)
+SEL = sys.argv[1:]
 for repo, out, rev in JOBS:
+    if SEL and repo not in SEL:
+        continue
     try:
         p = snapshot_download(repo, revision=rev, local_dir=out,
                               allow_patterns=["*.json", "*.safetensors", "*.txt", "LICENSE", "*.md", "tokenizer*"],
