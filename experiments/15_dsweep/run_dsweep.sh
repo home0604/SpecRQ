@@ -2,7 +2,8 @@
 # Claim-1 d-sweep (E5): same index bits, larger d (= more K=256 stages). Recipe = experiments/10_screen/run_screen.sh
 # (Hadamard, wikitext2 1024x4096 calib, val 32, accum fp64, AQ max_epochs 1000 / rel_tol 0.01, no block fine-tune),
 # only the codebook_weights differ:  T = target-only (alpha = 0..0,1), N = nested uniform alpha 1/L,
-#   N_<tag> = custom alphas from env CBW="a1 .. aL" (e.g. N_k4 = 0 0 0 .5 0 0 0 .5).
+#   N_<tag> = custom alphas from env CBW="a1 .. aL" (e.g. N_k4 = 0 0 0 .5 0 0 0 .5),
+#   RQ = stage-wise calibration-aware residual quantization, RQw = weight-MSE residual k-means (experiments/16_rq).
 #   1) quantize + PPL@4096 wt2/c4 for every prefix k=L..1   2) draft_target_eval kd=1 kt=L (target KL/top-1 vs FP16)
 #   2b) env KDS="2 4": per draft prefix kd, draft_target_eval kd kt=L (copy draft A; TV, top-1, greedy tau g1/2/4;
 #       --no_fp16, as the screening's A eval minus the FP16 reference) -> $OUT/kd<kd>/eval/A_bf16.json
@@ -18,6 +19,8 @@ cd /hai/home/lsh/SpecRQ
 CBW=${CBW:-}; CBW=${CBW//,/ }; KDS=${KDS:-}; KDS=${KDS//,/ }  # queue lines pass comma lists
 case $OBJ in
   T) CBW=$(python3 -c "print(' '.join(['0']*($L-1)+['1']))");;
+  RQ|RQw) CBW=$(python3 -c "print(' '.join(['0']*($L-1)+['1']))")  # alphas unused by the RQ wrapper (stage-wise)
+     export SPECRQ_RQ=$([[ $OBJ == RQ ]] && echo act || echo wmse); MAINPY=../../experiments/16_rq/rq_main.py;;
   N) CBW=$(python3 -c "print(' '.join(['%.10g' % (1/$L)]*$L))");;
   N_*) [[ -n "${CBW:-}" ]] || { echo "obj $OBJ needs env CBW"; exit 2; }
        [[ $(wc -w <<<"$CBW") == "$L" ]] || { echo "CBW needs $L values"; exit 2; };;
@@ -30,7 +33,7 @@ OFFL=$([[ "${OFFLOAD:-0}" == 1 ]] && echo --offload_activations || true)
 if [[ -n "${LAYERS:-}" ]]; then
   CKPT=$ROOT/probe/${CFG}_${OBJ}_l${LAYERS}; rm -rf "$CKPT"; mkdir -p "$(dirname "$CKPT")"
   echo "[dsweep] PROBE $CFG obj=$OBJ layers=$LAYERS CBW=$CBW $(date -Is)"
-  (cd specrq/dbd && /usr/bin/time -v python main.py $MODEL wikitext2 \
+  (cd specrq/dbd && /usr/bin/time -v python ${MAINPY:-main.py} $MODEL wikitext2 \
     --nsamples=1024 --val_size=32 --model_seqlen=4096 \
     --num_codebooks=$L --nbits_per_codebook=$NB --in_group_size=$D --out_group_size=1 \
     --codebook_weights $CBW --hadamard --accum_dtype float64 --relative_mse_tolerance=0.01 \
@@ -44,7 +47,7 @@ mkdir -p "$ROOT" "$OUT/eval"
 if [[ ! -e "$CKPT/args.pt" ]]; then
   [[ -e "$CKPT" ]] && { echo "partial $CKPT exists; refusing"; exit 1; }
   echo "[dsweep] train $CFG d=$D nbits=$NB L=$L obj=$OBJ CBW=$CBW $(date -Is)"
-  (cd specrq/dbd && /usr/bin/time -v python main.py $MODEL wikitext2 \
+  (cd specrq/dbd && /usr/bin/time -v python ${MAINPY:-main.py} $MODEL wikitext2 \
     --nsamples=1024 --val_size=32 --model_seqlen=4096 \
     --num_codebooks=$L --nbits_per_codebook=$NB --in_group_size=$D --out_group_size=1 \
     --codebook_weights $CBW --hadamard --accum_dtype float64 --relative_mse_tolerance=0.01 \

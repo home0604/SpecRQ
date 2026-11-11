@@ -1,0 +1,326 @@
+{
+ "exp": "E5",
+ "run": "qwen05_dsweep_d32K256L8_RQw",
+ "time": "2026-11-11T18:22:24",
+ "commit": "8c6a739",
+ "dirty_files": 10,
+ "host": "shark",
+ "cuda_visible_devices": "3",
+ "tmux_job": "sr-e5_dsweep_d32K256L8_RQw",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "cfg": "d32K256L8",
+  "d": 32,
+  "K": 256,
+  "L": 8,
+  "objective": "RQw",
+  "codebook_weights": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ],
+  "ckpt": "/data/lsh/ckpts/weightvq/dsweep/d32K256L8_RQw",
+  "setting": "Hadamard, weight-MSE residual k-means RQ (AQ init only, SPECRQ_RQ=wmse), wikitext2 1024x4096 calib (val 32), accum fp64, AQ max_epochs 1000 / rel_tol 0.01, beam 1, NO block fine-tune (--finetune_max_epochs 0); activations on GPU (no --offload_activations)",
+  "eval": "PPL@4096 wt2/c4 (main.py, every prefix k); KL/top-1 = draft_target_eval.py kt=L kd=1: 40x512 wt2 + 40x512 c4 windows; copy draft A kd=2 4: draft_target_eval kt=L --no_fp16 (TV/top-1 40x512 windows, greedy 8 chat + 8 wt2 prompts x 128 tok)",
+  "log": "/data/lsh/logs/e5_dsweep_d32K256L8_RQw.log",
+  "scripts": [
+   "experiments/15_dsweep/run_dsweep.sh",
+   "experiments/15_dsweep/save_dsweep.py"
+  ]
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k8": 393.367,
+   "wikitext2_k7": 6483.1963,
+   "wikitext2_k6": 178980.9531,
+   "wikitext2_k5": 269257.8125,
+   "wikitext2_k4": 1233892.5,
+   "wikitext2_k3": 1233892.5,
+   "wikitext2_k2": 7708828.0,
+   "wikitext2_k1": 1549471.875,
+   "c4_k8": 434.8813,
+   "c4_k7": 6291.4595,
+   "c4_k6": 233477.2344,
+   "c4_k5": 551938.25,
+   "c4_k4": 1441438.75,
+   "c4_k3": 1314689.875,
+   "c4_k2": 9438454.0,
+   "c4_k1": 1785161.75
+  },
+  "target_bpw": {
+   "index_bpw": 2.0,
+   "bpw_with_codebooks_scales": 2.5059065934065936
+  },
+  "prefix_bpw": {
+   "1": {
+    "index_bpw": 0.25,
+    "bpw_with_codebooks_scales": 0.32513736263736265
+   },
+   "2": {
+    "index_bpw": 0.5,
+    "bpw_with_codebooks_scales": 0.6366758241758241
+   },
+   "3": {
+    "index_bpw": 0.75,
+    "bpw_with_codebooks_scales": 0.9482142857142857
+   },
+   "4": {
+    "index_bpw": 1.0,
+    "bpw_with_codebooks_scales": 1.2597527472527472
+   },
+   "5": {
+    "index_bpw": 1.25,
+    "bpw_with_codebooks_scales": 1.5712912087912088
+   },
+   "6": {
+    "index_bpw": 1.5,
+    "bpw_with_codebooks_scales": 1.8828296703296703
+   },
+   "7": {
+    "index_bpw": 1.75,
+    "bpw_with_codebooks_scales": 2.194368131868132
+   },
+   "8": {
+    "index_bpw": 2.0,
+    "bpw_with_codebooks_scales": 2.5059065934065936
+   }
+  },
+  "layer_time_s": [
+   208.57735753059387,
+   208.87222909927368,
+   208.8228542804718,
+   208.89452528953552,
+   208.84144186973572,
+   208.89037537574768,
+   208.83270454406738,
+   208.8842535018921,
+   208.85432696342468,
+   208.87994813919067,
+   208.8448121547699,
+   208.87138867378235,
+   208.86840081214905,
+   208.87797164916992,
+   208.8574502468109,
+   208.860857963562,
+   208.86673140525818,
+   208.8562090396881,
+   208.88769245147705,
+   208.8550181388855,
+   209.03607439994812,
+   209.12484097480774,
+   208.87253618240356,
+   208.84030890464783
+  ],
+  "out_loss": [
+   0.29124540090560913,
+   0.11358436197042465,
+   0.26326480507850647,
+   0.2177601158618927,
+   0.05848808214068413,
+   0.058918196707963943,
+   0.041154906153678894,
+   0.05563381314277649,
+   0.033972468227148056,
+   0.04392839968204498,
+   0.03691190108656883,
+   0.049359265714883804,
+   0.04227619618177414,
+   0.04920026659965515,
+   0.04325972497463226,
+   0.050692033022642136,
+   0.06908618658781052,
+   0.03442539647221565,
+   0.028585173189640045,
+   0.038792021572589874,
+   0.03970900923013687,
+   0.12236860394477844,
+   0.03565552085638046,
+   0.08208584785461426
+  ],
+  "out_val_loss": [
+   0.2904182970523834,
+   0.11340934038162231,
+   0.2572697103023529,
+   0.21060959994792938,
+   0.0561659000813961,
+   0.05651865899562836,
+   0.040118083357810974,
+   0.05418325215578079,
+   0.03314141184091568,
+   0.04329744353890419,
+   0.035933177918195724,
+   0.048563599586486816,
+   0.04127414524555206,
+   0.04817385599017143,
+   0.04256565496325493,
+   0.04933607950806618,
+   0.06804221123456955,
+   0.03405924513936043,
+   0.02824772149324417,
+   0.038566917181015015,
+   0.03922071307897568,
+   0.1259085088968277,
+   0.035120099782943726,
+   0.08155657351016998
+  ],
+  "train_wall_s": 5344.0,
+  "train_peak_rss_gib": 3.2312355041503906,
+  "target_quality": {
+   "wikitext2": {
+    "ppl_target": 465.4145812988281,
+    "ppl_fp16": 18.12192153930664,
+    "kl_fp16_target": 3.2702314853668213,
+    "top1_fp16_target": 0.22646771371364594
+   },
+   "c4": {
+    "ppl_target": 482.62445068359375,
+    "ppl_fp16": 20.124181747436523,
+    "kl_fp16_target": 3.220130205154419,
+    "top1_fp16_target": 0.22490215301513672
+   }
+  },
+  "eval_json": "/data/lsh/results_accept/dsweep/d32K256L8_RQw/eval/A_bf16.json",
+  "kd": {
+   "2": {
+    "bpw": {
+     "index_bpw": 0.5,
+     "bpw_with_codebooks_scales": 0.6366758241758241
+    },
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.9844211339950562,
+      "accept_prob_1mTV": 0.015578866004943848,
+      "top1_agree": 0.0,
+      "kl_t_d": 10.968179702758789,
+      "kl_d_t": 10.756957054138184,
+      "ppl_target": 465.4145812988281,
+      "ppl_draft": 5133820.5
+     },
+     "c4": {
+      "tv_mean": 0.9873179793357849,
+      "accept_prob_1mTV": 0.012682020664215088,
+      "top1_agree": 4.892368087894283e-05,
+      "kl_t_d": 11.760359764099121,
+      "kl_d_t": 11.16308879852295,
+      "ppl_target": 482.62445068359375,
+      "ppl_draft": 9121319.0
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.0,
+       "g1_tok_per_iter": 1.0,
+       "g2_tok_per_iter": 1.0,
+       "g4_tok_per_iter": 1.0
+      },
+      "wikitext2": {
+       "match_rate": 0.0,
+       "g1_tok_per_iter": 1.0,
+       "g2_tok_per_iter": 1.0,
+       "g4_tok_per_iter": 1.0
+      },
+      "target_consistency": 0.98583984375
+     },
+     "eval_json": "/data/lsh/results_accept/dsweep/d32K256L8_RQw/kd2/eval/A_bf16.json"
+    }
+   },
+   "4": {
+    "bpw": {
+     "index_bpw": 1.0,
+     "bpw_with_codebooks_scales": 1.2597527472527472
+    },
+    "A_bf16": {
+     "wikitext2": {
+      "tv_mean": 0.9765176177024841,
+      "accept_prob_1mTV": 0.02348238229751587,
+      "top1_agree": 0.00044031310244463384,
+      "kl_t_d": 9.923017501831055,
+      "kl_d_t": 9.788416862487793,
+      "ppl_target": 465.4145812988281,
+      "ppl_draft": 2151768.25
+     },
+     "c4": {
+      "tv_mean": 0.9808099865913391,
+      "accept_prob_1mTV": 0.01919001340866089,
+      "top1_agree": 0.0,
+      "kl_t_d": 10.06641960144043,
+      "kl_d_t": 10.320545196533203,
+      "ppl_target": 482.62445068359375,
+      "ppl_draft": 2217357.75
+     },
+     "greedy": {
+      "instruct": {
+       "match_rate": 0.0,
+       "g1_tok_per_iter": 1.0,
+       "g2_tok_per_iter": 1.0,
+       "g4_tok_per_iter": 1.0
+      },
+      "wikitext2": {
+       "match_rate": 0.0,
+       "g1_tok_per_iter": 1.0,
+       "g2_tok_per_iter": 1.0,
+       "g4_tok_per_iter": 1.0
+      },
+      "target_consistency": 0.98583984375
+     },
+     "eval_json": "/data/lsh/results_accept/dsweep/d32K256L8_RQw/kd4/eval/A_bf16.json"
+    }
+   }
+  },
+  "table": [
+   {
+    "cfg": "d32K256L8",
+    "obj": "RQw",
+    "kd": 2,
+    "draft": "A",
+    "index_bpw": 0.5,
+    "bpw_with_codebooks_scales": 0.6366758241758241,
+    "wt2_tv": 0.9844211339950562,
+    "wt2_top1": 0.0,
+    "c4_tv": 0.9873179793357849,
+    "c4_top1": 4.892368087894283e-05,
+    "tau_instruct_g1": 1.0,
+    "tau_instruct_g2": 1.0,
+    "tau_instruct_g4": 1.0,
+    "tau_wikitext2_g1": 1.0,
+    "tau_wikitext2_g2": 1.0,
+    "tau_wikitext2_g4": 1.0,
+    "ppl4096_wt2_k": 7708828.0
+   },
+   {
+    "cfg": "d32K256L8",
+    "obj": "RQw",
+    "kd": 4,
+    "draft": "A",
+    "index_bpw": 1.0,
+    "bpw_with_codebooks_scales": 1.2597527472527472,
+    "wt2_tv": 0.9765176177024841,
+    "wt2_top1": 0.00044031310244463384,
+    "c4_tv": 0.9808099865913391,
+    "c4_top1": 0.0,
+    "tau_instruct_g1": 1.0,
+    "tau_instruct_g2": 1.0,
+    "tau_instruct_g4": 1.0,
+    "tau_wikitext2_g1": 1.0,
+    "tau_wikitext2_g2": 1.0,
+    "tau_wikitext2_g4": 1.0,
+    "ppl4096_wt2_k": 1233892.5
+   }
+  ]
+ },
+ "notes": ""
+}

@@ -82,7 +82,7 @@ def main():
                                    "ppl4096_wt2_k": m["ppl_4096"].get(f"wikitext2_k{kd}")})
     cfg = {"model": "Qwen2.5-0.5B-Instruct" if a.arch == "qwen05" else "Llama-3.1-8B-Instruct", "cfg": a.cfg, "d": a.d, "K": 2 ** a.nbits, "L": a.L, "objective": a.obj,
            "codebook_weights": [float(x) for x in a.cbw.split()], "ckpt": a.ckpt,
-           "setting": f"Hadamard, {'target-only alpha (last stage 1)' if a.obj == 'T' else (f'nested uniform alpha 1/{a.L}' if a.obj == 'N' else 'nested alpha ' + a.cbw)}, "
+           "setting": f"Hadamard, {'target-only alpha (last stage 1)' if a.obj == 'T' else (f'nested uniform alpha 1/{a.L}' if a.obj == 'N' else ('stage-wise calibration-aware RQ (experiments/16_rq/rq_main.py SPECRQ_RQ=act; scales trained in stage 1 only)' if a.obj == 'RQ' else ('weight-MSE residual k-means RQ (AQ init only, SPECRQ_RQ=wmse)' if a.obj == 'RQw' else 'nested alpha ' + a.cbw)))}, "
                       "wikitext2 1024x4096 calib (val 32), accum fp64, AQ max_epochs 1000 / rel_tol 0.01, beam 1, "
                       "NO block fine-tune (--finetune_max_epochs 0); activations on GPU (no --offload_activations)",
            "eval": "PPL@4096 wt2/c4 (main.py, every prefix k); KL/top-1 = draft_target_eval.py kt=L kd=1: 40x512 wt2 + 40x512 c4 windows"
