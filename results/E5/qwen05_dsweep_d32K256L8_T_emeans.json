@@ -1,0 +1,204 @@
+{
+ "exp": "E5",
+ "run": "qwen05_dsweep_d32K256L8_T_emeans",
+ "time": "2026-11-12T14:07:49",
+ "commit": "7b55315",
+ "dirty_files": 8,
+ "host": "shark",
+ "cuda_visible_devices": "7",
+ "tmux_job": "sr-e5_emeans_full_d32K256L8_ppl",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "cfg": "d32K256L8",
+  "d": 32,
+  "K": 256,
+  "L": 8,
+  "objective": "T",
+  "codebook_weights": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ],
+  "ckpt": "/data/lsh/ckpts/weightvq/dsweep/d32K256L8_T_emeans",
+  "setting": "Hadamard, target-only alpha (last stage 1), wikitext2 1024x4096 calib (val 32), accum fp64, AQ max_epochs 1000 / rel_tol 0.01, beam 1, NO block fine-tune (--finetune_max_epochs 0); activations on GPU (no --offload_activations)",
+  "eval": "PPL@4096 wt2/c4 (main.py, every prefix k); KL/top-1 = draft_target_eval.py kt=L kd=1: 40x512 wt2 + 40x512 c4 windows",
+  "log": "/data/lsh/logs/e5_emeans_full_d32K256L8.combined.log",
+  "scripts": [
+   "experiments/15_dsweep/run_dsweep.sh",
+   "experiments/15_dsweep/save_dsweep.py",
+   "experiments/17_emeans/run_full.sh",
+   "experiments/17_emeans/emeans_main.py"
+  ],
+  "init": "e-means (faiss 1.16.0 faiss.contrib.e_means.QuantizedEmeans, quantizer=None fp32, native torch backend on GPU, CUDA-graph replay off, nepochs=20.0, seed 0) replaces torch k-means in init_aq_kmeans; codes = exact nearest centroid",
+  "note": "c4 PPL@4096 from a separate main.py --load eval of the saved ckpt (training process failed at c4 load because HF_DATASETS_OFFLINE=1 was set); wt2 PPL from the training process; log = training log + reload log (combined)"
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k8": 25.1525,
+   "wikitext2_k7": 98.1266,
+   "wikitext2_k6": 2313.6353,
+   "wikitext2_k5": 83608.8203,
+   "wikitext2_k4": 114573.5859,
+   "wikitext2_k3": 879090.9375,
+   "wikitext2_k2": 873090.375,
+   "wikitext2_k1": 242760.0781,
+   "c4_k8": 40.1416,
+   "c4_k7": 133.9697,
+   "c4_k6": 3863.3013,
+   "c4_k5": 42085.6016,
+   "c4_k4": 125276.8359,
+   "c4_k3": 990685.4375,
+   "c4_k2": 800716.125,
+   "c4_k1": 368478.875
+  },
+  "target_bpw": {
+   "index_bpw": 2.0,
+   "bpw_with_codebooks_scales": 2.5059065934065936
+  },
+  "prefix_bpw": {
+   "1": {
+    "index_bpw": 0.25,
+    "bpw_with_codebooks_scales": 0.32513736263736265
+   },
+   "2": {
+    "index_bpw": 0.5,
+    "bpw_with_codebooks_scales": 0.6366758241758241
+   },
+   "3": {
+    "index_bpw": 0.75,
+    "bpw_with_codebooks_scales": 0.9482142857142857
+   },
+   "4": {
+    "index_bpw": 1.0,
+    "bpw_with_codebooks_scales": 1.2597527472527472
+   },
+   "5": {
+    "index_bpw": 1.25,
+    "bpw_with_codebooks_scales": 1.5712912087912088
+   },
+   "6": {
+    "index_bpw": 1.5,
+    "bpw_with_codebooks_scales": 1.8828296703296703
+   },
+   "7": {
+    "index_bpw": 1.75,
+    "bpw_with_codebooks_scales": 2.194368131868132
+   },
+   "8": {
+    "index_bpw": 2.0,
+    "bpw_with_codebooks_scales": 2.5059065934065936
+   }
+  },
+  "layer_time_s": [
+   292.3776443004608,
+   283.74959564208984,
+   274.16017985343933,
+   280.03680062294006,
+   280.51125288009644,
+   282.0193815231323,
+   283.6185305118561,
+   284.1547853946686,
+   281.29925084114075,
+   283.5508451461792,
+   283.2327175140381,
+   280.2092397212982,
+   282.87111806869507,
+   285.84185791015625,
+   285.543673992157,
+   281.2975881099701,
+   281.9392740726471,
+   282.3962736129761,
+   281.5748529434204,
+   282.92463731765747,
+   285.13550186157227,
+   286.36103224754333,
+   289.61275124549866,
+   291.5597207546234
+  ],
+  "out_loss": [
+   0.08529582619667053,
+   0.030083509162068367,
+   0.047056302428245544,
+   0.009568331763148308,
+   0.010478106327354908,
+   0.009049889631569386,
+   0.007462714333087206,
+   0.008372174575924873,
+   0.006476727779954672,
+   0.007037568371742964,
+   0.005535013508051634,
+   0.008080813102424145,
+   0.005468687508255243,
+   0.0068628741428256035,
+   0.007192468736320734,
+   0.0077002220787107944,
+   0.012202591635286808,
+   0.006219538860023022,
+   0.005842259153723717,
+   0.007566958665847778,
+   0.007749552838504314,
+   0.0063986401073634624,
+   0.006897148676216602,
+   0.009324406273663044
+  ],
+  "out_val_loss": [
+   0.08417829871177673,
+   0.02982073277235031,
+   0.05035441741347313,
+   0.009884512051939964,
+   0.010749039240181446,
+   0.009192878380417824,
+   0.007901751436293125,
+   0.008770803920924664,
+   0.006689062807708979,
+   0.007267649285495281,
+   0.005682423245161772,
+   0.008240441791713238,
+   0.0055655729956924915,
+   0.00690388074144721,
+   0.007147019729018211,
+   0.007609239779412746,
+   0.012182510457932949,
+   0.006215045694261789,
+   0.0058330511674284935,
+   0.007559510413557291,
+   0.007694793865084648,
+   0.006409090012311935,
+   0.006886807736009359,
+   0.009233121760189533
+  ],
+  "train_wall_s": 6896.0,
+  "train_peak_rss_gib": 3.2713470458984375,
+  "target_quality": {
+   "wikitext2": {
+    "ppl_target": 35.219173431396484,
+    "ppl_fp16": 18.12192153930664,
+    "kl_fp16_target": 0.743054986000061,
+    "top1_fp16_target": 0.5988747477531433
+   },
+   "c4": {
+    "ppl_target": 47.39525604248047,
+    "ppl_fp16": 20.124181747436523,
+    "kl_fp16_target": 0.920247495174408,
+    "top1_fp16_target": 0.5297945141792297
+   }
+  },
+  "eval_json": "/data/lsh/results_accept/dsweep/d32K256L8_T_emeans/eval/A_bf16.json"
+ },
+ "notes": ""
+}
