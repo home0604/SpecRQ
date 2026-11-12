@@ -15,7 +15,14 @@ mkdir -p $OUT/eval
 if [[ -n "${REF_MAXMEM:-}" ]]; then REFARG="--ref_max_memory $REF_MAXMEM"; else REFARG="--ref_device cuda:1"; fi
 [[ -e $OUT/eval/A_bf16.json ]] || python experiments/06_accept/draft_target_eval.py --model $MODEL --ckpt $CKPT --kt $L --kd 1 \
   --n_windows 40 --codes_uint8 $REFARG --out $OUT/eval/A_bf16.json
-CBW=$(python3 -c "print(' '.join(['0']*($L-1)+['1']))")
-python experiments/15_dsweep/save_dsweep.py --arch llama31 --cfg $CFG --d $D --nbits $NB --L $L --obj $OBJ --run_suffix "$SFX" --cbw "$CBW" \
+if [[ $OBJ == N_* ]]; then CBW=${CBW:?nested run needs env CBW}; CBW=${CBW//,/ }
+else CBW=$(python3 -c "print(' '.join(['0']*($L-1)+['1']))"); fi
+KDS=${KDS:-}; KDS=${KDS//,/ }
+for kd in $KDS; do  # copy-draft A at prefix kd (TV, top-1, greedy tau g1/2/4 chat + wt2), no FP16 reference
+  mkdir -p $OUT/kd$kd/eval
+  [[ -e $OUT/kd$kd/eval/A_bf16.json ]] || python experiments/06_accept/draft_target_eval.py --model $MODEL --ckpt $CKPT \
+    --kt $L --kd $kd --n_windows 40 --codes_uint8 --no_fp16 --out $OUT/kd$kd/eval/A_bf16.json
+done
+python experiments/15_dsweep/save_dsweep.py --arch llama31 --cfg $CFG --d $D --nbits $NB --L $L --obj $OBJ --run_suffix "$SFX" --cbw "$CBW" --kds "$KDS" --kd_root $OUT \
   --ckpt $CKPT --eval $OUT/eval/A_bf16.json --log ${TRAIN_LOG:-/data/lsh/logs/e5_lds_${CFG}_${OBJ}${SFX}.log} \
-  --calib_note "pile_val ${NSAMPLES:-192}x4096 calib (val 32; C1 recipe 1024), accum fp32" --ft_epochs ${FT_EPOCHS:-0}
+  --calib_note "pile_val ${NSAMPLES:-192}x4096 calib (val 32; C1 recipe 1024), accum fp32, seed ${SEED:-0}" --ft_epochs ${FT_EPOCHS:-0}

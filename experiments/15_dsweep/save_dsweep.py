@@ -95,6 +95,8 @@ def main():
         cfg["setting"] = cfg["setting"].replace("NO block fine-tune (--finetune_max_epochs 0)",
                                                 f"block fine-tune {a.ft_epochs} epochs (C1 recipe: batch 32, lr 1e-5, early stop 3, keep best)")
         cfg["ft_epochs"] = a.ft_epochs
+        if a.obj.startswith("N"):
+            cfg["setting"] += "; FT loss = sum_k alpha_k MSE(prefix-k block output) (experiments/16_rq/rq_main.py SPECRQ_FT_ALPHA)"
     p = save_result("E5", f"{a.arch}_dsweep_{a.cfg}_{a.obj}{a.run_suffix}", cfg, m, model_dir="/data/models/qwen2.5_0.5b_instruct" if a.arch == "qwen05" else "/data/models/llama3.1_8b_instruct")
     print(p)
     print(json.dumps({k: m[k] for k in ("ppl_4096", "target_bpw", "target_quality")}))

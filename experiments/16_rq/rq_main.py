@@ -17,6 +17,11 @@ Run exactly like specrq/dbd/main.py (same CLI, same cwd = specrq/dbd); this wrap
   unset: unchanged AQ (T / N), i.e. plain main.py.
 Output format, eval and checkpoints are unchanged (QuantizedWeight with L codebooks).
 
+SPECRQ_FT_ALPHA="a1,...,aL" (any mode): the block fine-tune loss (src/finetune._compute_mse_on_batch, which in DbD
+  uses only the full-model output k = L) becomes sum_k a_k * MSE(layer with prefix k, target outs), one forward per
+  a_k > 0 (QuantizedLinear.active_num_codebooks = k). Used for nested (N) runs with FT; also applies to the FT
+  validation loss (best-epoch selection).
+
 SPECRQ_OFFLOAD_FILE_DIR=<dir> (any mode, use with --offload_activations): the large pinned host buffers of main.py
   (layer inputs/outputs, >= 256 MiB) are allocated as file-backed shared mmaps in <dir> (torch.from_file) instead of
   pinned RAM. Same dtype and values; only the storage moves (pageable page cache, reclaimable; H2D copies are not
@@ -190,9 +195,44 @@ def rq_quantize(self, *, args, verbose: bool = True):
 
 aq_engine.AQEngine.quantize = rq_quantize
 
+
+def _install_prefix_ft(alphas):
+    import torch.nn.functional as F
+    import src.finetune as ft
+    from src.aq import QuantizedLinear
+    orig = ft._compute_mse_on_batch
+
+    def prefix_mse(layer, batch_iter, **kwargs):
+        inps_batch, outs_batch = next(batch_iter)
+        inps_batch = inps_batch.to(dtype=torch.float32)
+        outs_batch = outs_batch.to(dtype=torch.float32)
+        if inps_batch.shape[0] != 1:
+            for name, value in list(kwargs.items()):
+                if isinstance(value, torch.Tensor) and value.shape[0] == 1:
+                    kwargs[name] = value.tile(*([len(inps_batch)] + [1] * (value.ndim - 1)))
+        qls = [m for m in layer.modules() if isinstance(m, QuantizedLinear)]
+        total = 0.0
+        try:
+            for k, a in enumerate(alphas, start=1):
+                if a == 0:
+                    continue
+                for m in qls:
+                    m.active_num_codebooks = k
+                pred, *_ = layer(inps_batch, **kwargs)
+                total = total + a * F.mse_loss(pred, outs_batch)
+        finally:
+            for m in qls:
+                m.active_num_codebooks = None
+        return total
+
+    ft._compute_mse_on_batch = prefix_mse
+    print(f"[specrq-ft] block fine-tune loss = sum_k alpha_k * MSE(prefix k), alpha={alphas}", flush=True)
+
 if __name__ == "__main__":
     print(f"[specrq-rq] mode={MODE or 'off (plain AQ)'}")
     if OFFLOAD_DIR:
         _install_file_offload(OFFLOAD_DIR)
+    if os.environ.get("SPECRQ_FT_ALPHA"):
+        _install_prefix_ft([float(x) for x in os.environ["SPECRQ_FT_ALPHA"].replace(",", " ").split()])
     sys.argv = [os.path.join(DBD, "main.py")] + sys.argv[1:]
     runpy.run_path(os.path.join(DBD, "main.py"), run_name="__main__")

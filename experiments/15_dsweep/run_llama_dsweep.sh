@@ -2,15 +2,18 @@
 # Claim-1 d-sweep on Llama-3.1-8B-Instruct, 2-bit index, Hadamard, no FT.
 # Recipe = experiments/08_llama_full/run_llama_full.sh (pile_val calib, val 32, seqlen 4096, accum fp32, rel_tol 0.01,
 # beam 1) except --finetune_max_epochs 0, and:
-#   OBJ   T (target-only alpha 0..0,1, default) | RQ (stage-wise calibration-aware RQ) | RQw (weight-MSE residual k-means);
+#   OBJ   T (target-only alpha 0..0,1, default) | N_<tag> (nested alpha from env CBW; FT uses the alpha-weighted
+#         prefix loss) | RQ (stage-wise calibration-aware RQ) | RQw (weight-MSE residual k-means);
 #         all run through experiments/16_rq/rq_main.py (= plain main.py for T).
 #   NSAMPLES (default 192; 1024 = C1 recipe)
 #   OFFLOAD  gpu (default; activations on the GPU, only fits ~192 samples) | pinned (--offload_activations, recipe) |
 #            file (--offload_activations with the large host buffers as file-backed mmaps in /data/lsh/temp/offload;
 #            same values/dtype, pageable instead of pinned RAM)
 #   SFX   ckpt / run suffix (e.g. _n1024)
+#   SEED  main.py --seed (calibration sampling, k-means init / beam order RNG and the per-layer Hadamard signs; default 0)
 #   FT_EPOCHS block fine-tune epochs (default 0; 5 = C1 recipe: batch 32, lr 1e-5 default, early stop 3, keep best)
 #   EVALK prefixes evaluated by the training process (default: L..1)
+#   RESUME=1: resume a stopped run from its saved layers (new tmux job name; concatenate the logs for save_dsweep)
 #   LAYERS=n: quantize only the first n layers (probe), separate ckpt dir.
 # Usage: tools/run_tmux.sh <name> <gpu> nestvq -- <cpu prefix> bash experiments/15_dsweep/run_llama_dsweep.sh <cfg> <d> <nbits> <L> [OBJ]
 set -euo pipefail
@@ -19,8 +22,17 @@ MODEL=/data/models/llama3.1_8b_instruct
 ROOT=/data/lsh/ckpts/weightvq/dsweep_llama
 NS=${NSAMPLES:-192}; OFF=${OFFLOAD:-gpu}; SFX=${SFX:-}
 cd /hai/home/lsh/SpecRQ
-CBW=$(python3 -c "print(' '.join(['0']*($L-1)+['1']))")
-case $OBJ in T) export SPECRQ_RQ="";; RQ) export SPECRQ_RQ=act;; RQw) export SPECRQ_RQ=wmse;; *) echo "bad OBJ"; exit 2;; esac
+TCBW=$(python3 -c "print(' '.join(['0']*($L-1)+['1']))")
+case $OBJ in
+  T) export SPECRQ_RQ=""; CBW=$TCBW;;
+  RQ) export SPECRQ_RQ=act; CBW=$TCBW;;
+  RQw) export SPECRQ_RQ=wmse; CBW=$TCBW;;
+  N_*) export SPECRQ_RQ=""; CBW=${CBW:?OBJ $OBJ needs env CBW}; CBW=${CBW//,/ }
+       [[ $(wc -w <<<"$CBW") == "$L" ]] || { echo "CBW needs $L values"; exit 2; }
+       # nested: the block fine-tune uses the same alpha-weighted prefix loss (experiments/16_rq/rq_main.py)
+       [[ "${FT_EPOCHS:-0}" != 0 ]] && export SPECRQ_FT_ALPHA="$CBW";;
+  *) echo "bad OBJ"; exit 2;;
+esac
 case $OFF in
   gpu) OFFL="";;
   pinned) OFFL="--offload_activations";;
@@ -29,14 +41,19 @@ case $OFF in
 esac
 EVALK=${EVALK:-$(seq $L -1 1 | tr '\n' ' ')}
 if [[ -n "${LAYERS:-}" ]]; then
-  CKPT=$ROOT/probe/${CFG}_${OBJ}_n${NS}_${OFF}_ft${FT_EPOCHS:-0}_l${LAYERS}; rm -rf "$CKPT"; mkdir -p "$(dirname "$CKPT")"
+  CKPT=$ROOT/probe/${CFG}_${OBJ}_n${NS}_${OFF}_ft${FT_EPOCHS:-0}_s${SEED:-0}_l${LAYERS}; rm -rf "$CKPT"; mkdir -p "$(dirname "$CKPT")"
   EXTRA="--quantize_num_layers $LAYERS"
 else
   CKPT=$ROOT/${CFG}_${OBJ}${SFX}; EXTRA="--eval_num_codebooks $EVALK"
-  [[ -e "$CKPT" ]] && { echo "refusing to overwrite $CKPT"; exit 1; }
+  if [[ -e "$CKPT" ]]; then
+    # RESUME=1: continue a stopped run (main.py --resume reloads the saved <layer>.pth files and recomputes the
+    # activations through them; later layers use a different RNG stream than an uninterrupted run)
+    [[ "${RESUME:-0}" == 1 && ! -e "$CKPT/args.pt" ]] || { echo "refusing to overwrite $CKPT (RESUME=1 resumes a partial run)"; exit 1; }
+    EXTRA="$EXTRA --resume"; echo "[llama-dsweep] resuming $CKPT ($(ls $CKPT | grep -c '\.pth$') layers saved)"
+  fi
   mkdir -p "$ROOT"
 fi
-echo "[llama-dsweep] $CFG obj=$OBJ d=$D nbits=$NB L=$L CBW=$CBW nsamples=$NS offload=$OFF ft=${FT_EPOCHS:-0} layers=${LAYERS:-all} $(date -Is)"
+echo "[llama-dsweep] $CFG obj=$OBJ d=$D nbits=$NB L=$L CBW=$CBW nsamples=$NS offload=$OFF ft=${FT_EPOCHS:-0} seed=${SEED:-0} layers=${LAYERS:-all} $(date -Is)"
 ( while true; do echo "$(date +%s) $(nvidia-smi --query-gpu=memory.used --format=csv,noheader -i ${CUDA_VISIBLE_DEVICES%%,*}) cg=$(( $(cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/memory.current) >> 30 ))G $(grep -E '^(anon|shmem|file) ' /sys/fs/cgroup/user.slice/user-$(id -u).slice/memory.stat | awk '{printf "%s=%dG ",$1,$2/2^30}')"; sleep 30; done ) > $CKPT.mem.log 2>&1 &
 MON=$!
 trap "kill $MON 2>/dev/null || true" EXIT
@@ -45,5 +62,5 @@ trap "kill $MON 2>/dev/null || true" EXIT
   --num_codebooks=$L --nbits_per_codebook=$NB --in_group_size=$D --out_group_size=1 \
   --codebook_weights $CBW --hadamard --accum_dtype float32 --relative_mse_tolerance=0.01 \
   --finetune_batch_size=32 --finetune_max_epochs=${FT_EPOCHS:-0} --finetune_early_stop=3 --finetune_keep_best \
-  --local_batch_size=1 $OFFL --devices cuda:0 $EXTRA --save $CKPT)
+  --local_batch_size=1 $OFFL --devices cuda:0 --seed ${SEED:-0} $EXTRA --save $CKPT)
 echo "[llama-dsweep] done $CFG $OBJ $(date -Is)"
