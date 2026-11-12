@@ -507,9 +507,12 @@ class NestModel:
             self._rope_len = n
         return self._cos, self._sin
 
-    def forward(self, tokens, pos, cache: Cache, k=None, use_draft=False, last_only=False, capture=None, vd=None):
+    def forward(self, tokens, pos, cache: Cache, k=None, use_draft=False, last_only=False, capture=None, vd=None,
+                layer_ids=None):
         """tokens [M] long (device); pos: 0-d long device tensor (position of tokens[0]); returns logits [M or 1, V]
-        (vd=None) or [M or 1, V_d] over the FR-Spec draft vocab (map argmax with to_token_ids)."""
+        (vd=None) or [M or 1, V_d] over the FR-Spec draft vocab (map argmax with to_token_ids).
+        layer_ids: optional ascending list of decoder layers to run (layer skip, draft only); skipped layers pass the
+        residual stream through unchanged and do not touch their KV cache slot. None = all layers."""
         k = self.L if k is None else k
         M = tokens.shape[0]
         T = cache.k.shape[2]
@@ -529,12 +532,16 @@ class NestModel:
             if not hasattr(self, "fused_ok"):
                 self._setup_fused()
             fg = self.fused_ok
+        ids = list(range(self.n_layers)) if layer_ids is None else list(layer_ids)
+        l0 = self.layers[ids[0]]
         if fg:
-            C, sg = self.layers[0]["g_qkv"]
-            _, xs = add_rms_rot(h, None, self.layers[0]["in_norm"], sg, C, self.eps)
+            C, sg = l0["g_qkv"]
+            _, xs = add_rms_rot(h, None, l0["in_norm"], sg, C, self.eps)
         else:
-            x = rms(h, self.layers[0]["in_norm"], self.eps)
-        for li, lay in enumerate(self.layers):
+            x = rms(h, l0["in_norm"], self.eps)
+        for j, li in enumerate(ids):
+            lay = self.layers[li]
+            nli = ids[j + 1] if j + 1 < len(ids) else None
             if fg:
                 rq = lay["g_qkv"][1] is not None
                 xq, xk, xv = (xs[0], xs[1], xs[2]) if rq else (xs, xs, xs)
@@ -558,7 +565,7 @@ class NestModel:
                 o = F.scaled_dot_product_attention(qh, cache.k[li][None], cache.v[li][None], attn_mask=mask,
                                                    scale=scale)
             o = o.view(self.Hkv, G, M, self.D).permute(2, 0, 1, 3).reshape(M, -1)
-            nxt = self.layers[li + 1]["in_norm"] if li + 1 < self.n_layers else self.norm
+            nxt = self.layers[nli]["in_norm"] if nli is not None else self.norm
             if fg:
                 C, sg = lay["g_gu"]
                 h, xs = add_rms_rot(h, lay["o_proj"](o, k, use_draft), lay["post_norm"], sg, C, self.eps)
@@ -567,8 +574,8 @@ class NestModel:
                 a = act_rot(lay["gate_proj"](xg, k, use_draft, rotated=True),
                             lay["up_proj"](xu, k, use_draft, rotated=True), sd, Cd)
                 dn = lay["down_proj"](a, k, use_draft, rotated=True)
-                if li + 1 < self.n_layers:
-                    C, sg = self.layers[li + 1]["g_qkv"]
+                if nli is not None:
+                    C, sg = self.layers[nli]["g_qkv"]
                     h, xs = add_rms_rot(h, dn, nxt, sg, C, self.eps)
                 else:
                     h, x = add_rms_rot(h, dn, nxt, None, 128, self.eps)

@@ -12,6 +12,12 @@ Mode "vq" (default):
     (a) kd=2 (draft == target), natural acceptance, and kd=2 forced full acceptance (len = gamma)
     (b) kd=1 with forced acceptance (SpecDecoder force_accept): i.i.d. p in --ps and fixed a in 0..gamma
   Output tokens of forced runs are NOT the target greedy output (timing of the loop only).
+Mode "skip": prefix (k1) + draft layer skip. For each skip pattern (--skips) x draft vocab (--grid-vds): draft step
+  k1 with the skipped decoder layers removed (residual passes through; skipped layers neither compute nor write KV),
+  timed as an ARDecoder loop and as an M=1 forward graph; spec loop with draft_kv shared and forced full acceptance
+  (len = gamma) for each gamma -> round_ms, tau_breakeven = round_ms / T_AR. Target AR k2 is measured at the start and
+  at the end of the job (same GPU) as the reference. Verify always runs all layers with k2, so the target KV of every
+  layer at confirmed positions is written by verify exactly as in the no-skip loop.
 Mode "marlin": same runner, Marlin FP16 x INT4 g128 random linears (+ random fp16 qkv bias), fp16 embed / lm_head;
   AR step + forward M=1..5 (verify-sized) only.
 Usage: python experiments/14_q32b_upper/q32b_upper.py --mode vq --run NAME
@@ -94,10 +100,114 @@ def spec_row(m, prompt, T, g, kd, vd, n_new, reps, force, tag):
     return r
 
 
+class SkipView:
+    """Proxy over NestModel: forward calls with a draft prefix k < L run only the kept layers (layer skip); target
+    calls (k None or L) run all layers. Everything else is delegated."""
+
+    def __init__(self, m, skip):
+        self._m = m
+        self._ids = [i for i in range(m.n_layers) if i not in set(skip)] if skip else None
+
+    def __getattr__(self, name):
+        return getattr(self._m, name)
+
+    def forward(self, tokens, pos, cache, k=None, use_draft=False, **kw):
+        ids = self._ids if (k is not None and k < self._m.L) else None
+        return self._m.forward(tokens, pos, cache, k, use_draft, layer_ids=ids, **kw)
+
+
+def even_idx(n, lo, hi):
+    """n layer indices spread evenly over [lo, hi)."""
+    span = hi - lo
+    return sorted({lo + int((i + 0.5) * span / n) for i in range(n)})
+
+
+def skip_patterns(nL, names):
+    pats = {}
+    for nm in names:
+        if nm == "none":
+            pats[nm] = []
+        elif nm.startswith("back"):  # last n layers (contiguous)
+            n = int(nm[4:])
+            pats[nm] = list(range(nL - n, nL))
+        elif nm.startswith("mid"):  # contiguous middle block, first/last (nL-n)/2 kept
+            n = int(nm[3:])
+            lo = (nL - n) // 2
+            pats[nm] = list(range(lo, lo + n))
+        elif nm.startswith("even") and "_keep" in nm:  # n evenly spaced inside [keep, nL-keep)
+            n, keep = nm[4:].split("_keep")
+            pats[nm] = even_idx(int(n), int(keep), nL - int(keep))
+        elif nm.startswith("even"):  # n evenly spaced over all layers (n = nL/2 -> every 2nd)
+            pats[nm] = even_idx(int(nm[4:]), 0, nL)
+        else:
+            raise ValueError(nm)
+        assert len(pats[nm]) == len(set(pats[nm])) and all(0 <= i < nL for i in pats[nm]), nm
+    return pats
+
+
+def main_skip(a, m, res, prompt, T, gen):
+    V = m.lm_head.shape[0]
+    pats = skip_patterns(m.n_layers, a.skips)
+    res["skip_patterns"] = pats
+    res["ar"].append(ar_rows(m, prompt, T, None, None, a.n_new, a.reps))
+    print("[ar target start]", res["ar"][-1], flush=True)
+    toks = torch.randint(0, m.cfg.vocab_size, (8,), device="cuda", generator=gen)
+    pos = torch.tensor(a.P, device="cuda")
+    rows = []
+    for nm, sk in pats.items():
+        sv = SkipView(m, sk)
+        for vdg in a.grid_vds:
+            vd = vdg or None
+            r = {"skip": nm, "n_skip": len(sk), "n_run": m.n_layers - len(sk), "vd": vd or V}
+            r["ar_draft"] = ar_rows(sv, prompt, T, 1, vd, a.n_new, a.reps)
+            cache = m.new_cache(T)
+            m.prefill(prompt, cache, m.L)
+            r["fwd_M1_us"] = graph_us(lambda: m.to_token_ids(sv.forward(toks[:1], pos, cache, 1, last_only=True,
+                                                                         vd=vd).argmax(-1), vd))
+            del cache
+            torch.cuda.empty_cache()
+            r["spec"] = []
+            for g in a.gammas:
+                s = spec_row(sv, prompt, T, g, 1, vd, a.n_new, a.reps, ("len", g), f"skip_{nm}_len{g}")
+                r["spec"].append(s)
+            rows.append(r)
+            print(f"[skip {nm} n={len(sk)} vd={vd}] draft step {r['ar_draft']['step_us']['median']:.0f} us, fwd "
+                  f"{r['fwd_M1_us']['median']:.0f} us; rounds " +
+                  " ".join(f"g{s['gamma']}={s['round_ms']['median']:.2f}ms(d{s['t_draft_round_ms']['median']:.2f}/"
+                           f"v{s['t_verify_ms']['median']:.2f})" for s in r["spec"]), flush=True)
+    res["skip"] = rows
+    res["ar"].append(ar_rows(m, prompt, T, None, None, a.n_new, a.reps))
+    print("[ar target end]", res["ar"][-1], flush=True)
+    T0, T1 = (res["ar"][i]["step_us"]["median"] / 1e3 for i in (0, -1))
+    T_ar = 0.5 * (T0 + T1)
+    summ = []
+    for r in rows:
+        d = r["ar_draft"]["step_us"]["median"] / 1e3
+        row = {"skip": r["skip"], "n_skip": r["n_skip"], "vd": r["vd"], "T_ar_ms": T_ar,
+               "T_draft_step_ms": d, "c": d / T_ar,
+               "c_range": [r["ar_draft"]["step_us"]["min"] / 1e3 / T_ar, r["ar_draft"]["step_us"]["max"] / 1e3 / T_ar],
+               "c_fwd_graph": r["fwd_M1_us"]["median"] / 1e3 / T_ar, "gamma": {}}
+        for s in r["spec"]:
+            g, R = s["gamma"], s["round_ms"]["median"]
+            row["gamma"][g] = {"round_ms": R, "round_ms_range": [s["round_ms"]["min"], s["round_ms"]["max"]],
+                               "draft_ms": s["t_draft_round_ms"]["median"], "verify_ms": s["t_verify_ms"]["median"],
+                               "overhead_ms": s["t_overhead_ms"]["median"],
+                               "c_in_loop": s["t_draft_round_ms"]["median"] / g / T_ar,
+                               "tau_breakeven": R / T_ar, "alpha_breakeven_iid": req_alpha(R / T_ar, g),
+                               "speedup_at_full_accept": (g + 1) * T_ar / R}
+        summ.append(row)
+        print("[summary]", row, flush=True)
+    res["summary"] = summ
+    res["T_ar_start_end_ms"] = [T0, T1]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="/data/models/qwen2.5_32b_instruct")
-    ap.add_argument("--mode", choices=["vq", "marlin"], default="vq")
+    ap.add_argument("--mode", choices=["vq", "marlin", "skip"], default="vq")
+    ap.add_argument("--skips", nargs="+", default=["none", "back16", "back24", "back32", "even16", "even24", "even32",
+                                                   "mid32", "even32_keep4"],
+                    help="mode skip: draft layer-skip patterns (none, back<n>, mid<n>, even<n>, even<n>_keep<m>)")
     ap.add_argument("--P", type=int, default=128)
     ap.add_argument("--n-new", type=int, default=256)
     ap.add_argument("--reps", type=int, default=3)
@@ -110,11 +220,13 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.quick:
         a.gammas, a.ps, a.n_new, a.grid_vds = [2], [0.7], 64, [a.vd]
+        if a.mode == "skip":
+            a.skips = ["none", "even32"]
     co0, util0 = cotenants() or "none", gpu_util()
     print(f"[q32b] co-tenants at start: {co0}; util {util0}", flush=True)
     t0 = time.time()
     torch.cuda.reset_peak_memory_stats()
-    if a.mode == "vq":
+    if a.mode in ("vq", "skip"):
         m = NestModel.synthetic(a.model, L=2, hadamard=True, verbose=True)
     else:
         m = NestModel.synthetic(a.model, dtype=torch.float16, linear_impl="marlin", verbose=True)
@@ -132,7 +244,7 @@ def main(argv=None):
             "embed_bytes": m.embed.numel() * m.embed.element_size(),
             "tied_lm_head": m.lm_head.data_ptr() == m.embed.data_ptr(),
             "linear_bytes_per_token": {f"k{k}": m.linear_bytes(k) for k in range(1, m.L + 1)}}
-    if a.mode == "vq":
+    if a.mode in ("vq", "skip"):
         from specrq.infer.frspec import coverage, default_freq_dir, load_subset
         fd = default_freq_dir(m.cfg)  # Qwen2.5-0.5B pile-val table; tokenizer files identical to 32B (md5 checked)
         ids = load_subset(fd, a.vd, None)
@@ -145,6 +257,29 @@ def main(argv=None):
     T = a.P + a.n_new + max(a.gammas) + 24
     res = {"load": load, "ar": [], "fwd": [], "lm_head": {}, "spec": []}
     kt = m.L
+    if a.mode == "skip":
+        main_skip(a, m, res, prompt, T, gen)
+        res["peak_mem_gib"] = torch.cuda.max_memory_allocated() / 2 ** 30
+        co1, util1 = cotenants() or "none", gpu_util()
+        print(f"[q32b] co-tenants at end: {co1}; util {util1}; peak mem {res['peak_mem_gib']:.2f} GiB", flush=True)
+        if a.run:
+            from tools.results import save_result
+            print("saved", save_result("E4", a.run, config={
+                "setting": ("SYNTHETIC Qwen2.5-32B-Instruct: real embed/norms/untied lm_head, random nested-VQ C1-kernel "
+                            "linears d8 K256 L2 + random Hadamard signs B=256 + random qkv bias; draft = prefix k1 + "
+                            "decoder layer skip (skipped layers: residual pass-through, no KV write in the draft); "
+                            "verify = k2 all layers; timing only, no quality; forced full acceptance (len=gamma)"),
+                "model": a.model, "mode": a.mode, "d": 8, "K": 256, "L": m.L, "kt": kt, "kd": 1, "P": a.P,
+                "n_new": a.n_new, "repeats": a.reps, "gammas": a.gammas, "grid_vds": a.grid_vds, "skips": a.skips,
+                "draft_kv": "shared", "dtype": str(m.dtype), "deterministic_splitk": True,
+                "decode_attn": "fp32 compiled", "T_max": T,
+                "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                "co_tenant_start": co0, "co_tenant_end": co1, "gpu_util_start": util0, "gpu_util_end": util1,
+                "T_ar_definition": "mean of target AR k2 step medians measured at job start and end",
+                "force_accept_note": "SpecDecoder(force_accept=('len', gamma)): every round accepts gamma drafts; "
+                                     "draft/verify graphs and loop are the real ones; output is not target-greedy"},
+                metrics=res, model_dir=a.model))
+        return
 
     # ---------------- parts
     res["ar"].append(ar_rows(m, prompt, T, None, None, a.n_new, a.reps))
