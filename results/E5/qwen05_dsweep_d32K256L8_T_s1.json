@@ -1,0 +1,203 @@
+{
+ "exp": "E5",
+ "run": "qwen05_dsweep_d32K256L8_T_s1",
+ "time": "2026-11-12T16:12:15",
+ "commit": "c64e3bc",
+ "dirty_files": 8,
+ "host": "shark",
+ "cuda_visible_devices": "0",
+ "tmux_job": "sr-e5_full_d32K256L8_T_s1",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "cfg": "d32K256L8",
+  "d": 32,
+  "K": 256,
+  "L": 8,
+  "objective": "T",
+  "codebook_weights": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ],
+  "ckpt": "/data/lsh/ckpts/weightvq/dsweep/d32K256L8_T_s1",
+  "setting": "Hadamard, target-only alpha (last stage 1), wikitext2 1024x4096 calib (val 32), accum fp64, AQ max_epochs 1000 / rel_tol 0.01, beam 1, NO block fine-tune (--finetune_max_epochs 0); activations on GPU (no --offload_activations); main.py --seed 1 (calib sampling, val split, Hadamard signs, init RNG)",
+  "eval": "PPL@4096 wt2/c4 (main.py, every prefix k); KL/top-1 = draft_target_eval.py kt=L kd=1: 40x512 wt2 + 40x512 c4 windows",
+  "log": "/data/lsh/logs/e5_full_d32K256L8_T_s1.log",
+  "scripts": [
+   "experiments/15_dsweep/run_dsweep.sh",
+   "experiments/15_dsweep/save_dsweep.py",
+   "experiments/17_emeans/run_full.sh"
+  ],
+  "seed": 1,
+  "init": "torch k-means (AQLM default fit_kmeans, 100 iters)"
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k8": 26.2414,
+   "wikitext2_k7": 112.4606,
+   "wikitext2_k6": 2112.0063,
+   "wikitext2_k5": 68899.9297,
+   "wikitext2_k4": 233785.1562,
+   "wikitext2_k3": 1608955.5,
+   "wikitext2_k2": 900419.5625,
+   "wikitext2_k1": 20145528.0,
+   "c4_k8": 40.9833,
+   "c4_k7": 168.8324,
+   "c4_k6": 2599.7202,
+   "c4_k5": 65766.9062,
+   "c4_k4": 247022.8906,
+   "c4_k3": 1551732.875,
+   "c4_k2": 882425.5625,
+   "c4_k1": 20681012.0
+  },
+  "target_bpw": {
+   "index_bpw": 2.0,
+   "bpw_with_codebooks_scales": 2.5059065934065936
+  },
+  "prefix_bpw": {
+   "1": {
+    "index_bpw": 0.25,
+    "bpw_with_codebooks_scales": 0.32513736263736265
+   },
+   "2": {
+    "index_bpw": 0.5,
+    "bpw_with_codebooks_scales": 0.6366758241758241
+   },
+   "3": {
+    "index_bpw": 0.75,
+    "bpw_with_codebooks_scales": 0.9482142857142857
+   },
+   "4": {
+    "index_bpw": 1.0,
+    "bpw_with_codebooks_scales": 1.2597527472527472
+   },
+   "5": {
+    "index_bpw": 1.25,
+    "bpw_with_codebooks_scales": 1.5712912087912088
+   },
+   "6": {
+    "index_bpw": 1.5,
+    "bpw_with_codebooks_scales": 1.8828296703296703
+   },
+   "7": {
+    "index_bpw": 1.75,
+    "bpw_with_codebooks_scales": 2.194368131868132
+   },
+   "8": {
+    "index_bpw": 2.0,
+    "bpw_with_codebooks_scales": 2.5059065934065936
+   }
+  },
+  "layer_time_s": [
+   282.8567593097687,
+   285.4518201351166,
+   276.07325434684753,
+   280.17913842201233,
+   275.72424268722534,
+   284.09413743019104,
+   269.44120168685913,
+   282.18775820732117,
+   289.8040108680725,
+   279.7904872894287,
+   276.76087737083435,
+   281.8098978996277,
+   283.9183077812195,
+   282.5283100605011,
+   282.68331241607666,
+   289.23962450027466,
+   282.64018869400024,
+   286.56057953834534,
+   284.2126188278198,
+   282.82092356681824,
+   283.94555377960205,
+   288.8303198814392,
+   301.61577892303467,
+   291.7195496559143
+  ],
+  "out_loss": [
+   0.0866946130990982,
+   0.030714426189661026,
+   0.04971528798341751,
+   0.010341690853238106,
+   0.011266656219959259,
+   0.010043330490589142,
+   0.008030416443943977,
+   0.008977588266134262,
+   0.006780057214200497,
+   0.007763925939798355,
+   0.006172379478812218,
+   0.009336020797491074,
+   0.0060997274704277515,
+   0.007629557978361845,
+   0.008147346787154675,
+   0.008595048449933529,
+   0.01320606004446745,
+   0.006862165872007608,
+   0.00621377769857645,
+   0.008029310964047909,
+   0.008304779417812824,
+   0.006811905186623335,
+   0.007339101284742355,
+   0.009905527345836163
+  ],
+  "out_val_loss": [
+   0.08708630502223969,
+   0.03074599988758564,
+   0.05313684791326523,
+   0.00973664503544569,
+   0.010478302836418152,
+   0.009455215185880661,
+   0.00762331485748291,
+   0.008584292605519295,
+   0.006524372845888138,
+   0.007426847703754902,
+   0.005894727073609829,
+   0.008921491913497448,
+   0.005829961970448494,
+   0.007332315668463707,
+   0.007859356701374054,
+   0.008344129659235477,
+   0.01278806384652853,
+   0.006736470852047205,
+   0.006105001084506512,
+   0.00793404784053564,
+   0.008232408203184605,
+   0.006764447782188654,
+   0.007309194188565016,
+   0.009778656996786594
+  ],
+  "train_wall_s": 7153.0,
+  "train_peak_rss_gib": 3.4344825744628906,
+  "target_quality": {
+   "wikitext2": {
+    "ppl_target": 35.78610610961914,
+    "ppl_fp16": 18.12192153930664,
+    "kl_fp16_target": 0.7689253091812134,
+    "top1_fp16_target": 0.5935909748077393
+   },
+   "c4": {
+    "ppl_target": 48.04991149902344,
+    "ppl_fp16": 20.124181747436523,
+    "kl_fp16_target": 0.9319455623626709,
+    "top1_fp16_target": 0.5276908278465271
+   }
+  },
+  "eval_json": "/data/lsh/results_accept/dsweep/d32K256L8_T_s1/eval/A_bf16.json"
+ },
+ "notes": ""
+}

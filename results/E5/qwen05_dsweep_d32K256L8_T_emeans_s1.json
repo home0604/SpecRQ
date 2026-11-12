@@ -1,0 +1,204 @@
+{
+ "exp": "E5",
+ "run": "qwen05_dsweep_d32K256L8_T_emeans_s1",
+ "time": "2026-11-12T16:12:08",
+ "commit": "c64e3bc",
+ "dirty_files": 8,
+ "host": "shark",
+ "cuda_visible_devices": "1",
+ "tmux_job": "sr-e5_full_d32K256L8_T_emeans_s1",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "cfg": "d32K256L8",
+  "d": 32,
+  "K": 256,
+  "L": 8,
+  "objective": "T",
+  "codebook_weights": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ],
+  "ckpt": "/data/lsh/ckpts/weightvq/dsweep/d32K256L8_T_emeans_s1",
+  "setting": "Hadamard, target-only alpha (last stage 1), wikitext2 1024x4096 calib (val 32), accum fp64, AQ max_epochs 1000 / rel_tol 0.01, beam 1, NO block fine-tune (--finetune_max_epochs 0); activations on GPU (no --offload_activations); main.py --seed 1 (calib sampling, val split, Hadamard signs, init RNG)",
+  "eval": "PPL@4096 wt2/c4 (main.py, every prefix k); KL/top-1 = draft_target_eval.py kt=L kd=1: 40x512 wt2 + 40x512 c4 windows",
+  "log": "/data/lsh/logs/e5_full_d32K256L8_T_emeans_s1.log",
+  "scripts": [
+   "experiments/15_dsweep/run_dsweep.sh",
+   "experiments/15_dsweep/save_dsweep.py",
+   "experiments/17_emeans/run_full.sh",
+   "experiments/17_emeans/emeans_main.py"
+  ],
+  "seed": 1,
+  "init": "e-means (faiss 1.16.0 faiss.contrib.e_means.QuantizedEmeans, quantizer=None fp32, native torch backend on GPU, CUDA-graph replay off, nepochs=20, seed 1) replaces torch k-means in init_aq_kmeans; codes = exact nearest centroid"
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k8": 26.7804,
+   "wikitext2_k7": 107.3795,
+   "wikitext2_k6": 1984.896,
+   "wikitext2_k5": 41504.668,
+   "wikitext2_k4": 366459.5938,
+   "wikitext2_k3": 408203.2188,
+   "wikitext2_k2": 255337.6719,
+   "wikitext2_k1": 153681.3438,
+   "c4_k8": 41.1036,
+   "c4_k7": 152.532,
+   "c4_k6": 1991.3291,
+   "c4_k5": 28857.9727,
+   "c4_k4": 291704.375,
+   "c4_k3": 362854.7188,
+   "c4_k2": 334930.9688,
+   "c4_k1": 153529.8594
+  },
+  "target_bpw": {
+   "index_bpw": 2.0,
+   "bpw_with_codebooks_scales": 2.5059065934065936
+  },
+  "prefix_bpw": {
+   "1": {
+    "index_bpw": 0.25,
+    "bpw_with_codebooks_scales": 0.32513736263736265
+   },
+   "2": {
+    "index_bpw": 0.5,
+    "bpw_with_codebooks_scales": 0.6366758241758241
+   },
+   "3": {
+    "index_bpw": 0.75,
+    "bpw_with_codebooks_scales": 0.9482142857142857
+   },
+   "4": {
+    "index_bpw": 1.0,
+    "bpw_with_codebooks_scales": 1.2597527472527472
+   },
+   "5": {
+    "index_bpw": 1.25,
+    "bpw_with_codebooks_scales": 1.5712912087912088
+   },
+   "6": {
+    "index_bpw": 1.5,
+    "bpw_with_codebooks_scales": 1.8828296703296703
+   },
+   "7": {
+    "index_bpw": 1.75,
+    "bpw_with_codebooks_scales": 2.194368131868132
+   },
+   "8": {
+    "index_bpw": 2.0,
+    "bpw_with_codebooks_scales": 2.5059065934065936
+   }
+  },
+  "layer_time_s": [
+   276.1804437637329,
+   285.2346134185791,
+   257.8720853328705,
+   280.11083602905273,
+   280.4768557548523,
+   280.33424139022827,
+   283.5671570301056,
+   283.41827487945557,
+   281.9439740180969,
+   291.4082534313202,
+   282.5002067089081,
+   282.48181891441345,
+   282.6326687335968,
+   285.6501154899597,
+   281.17230010032654,
+   283.4497821331024,
+   286.2580428123474,
+   284.67852663993835,
+   282.5130021572113,
+   281.2235414981842,
+   283.0702075958252,
+   282.3916003704071,
+   287.84775161743164,
+   301.30276250839233
+  ],
+  "out_loss": [
+   0.08450765162706375,
+   0.030052339658141136,
+   0.05017619952559471,
+   0.009301901794970036,
+   0.010074141435325146,
+   0.00922006368637085,
+   0.007388436235487461,
+   0.008181137032806873,
+   0.006166511680930853,
+   0.006773808505386114,
+   0.005416777450591326,
+   0.00797229167073965,
+   0.005405860487371683,
+   0.006926485802978277,
+   0.007211926393210888,
+   0.007815706543624401,
+   0.012055757455527782,
+   0.006305932067334652,
+   0.006196164526045322,
+   0.007807399611920118,
+   0.00795753113925457,
+   0.0065055424347519875,
+   0.006983178202062845,
+   0.009287070482969284
+  ],
+  "out_val_loss": [
+   0.08472256362438202,
+   0.030128872022032738,
+   0.05079979449510574,
+   0.010000755079090595,
+   0.010568303987383842,
+   0.009485144168138504,
+   0.007706192787736654,
+   0.008500706404447556,
+   0.006424911320209503,
+   0.007103386335074902,
+   0.005683442577719688,
+   0.008420874364674091,
+   0.005832341965287924,
+   0.007323091849684715,
+   0.007502311374992132,
+   0.00814290065318346,
+   0.012462342157959938,
+   0.006421430967748165,
+   0.006261398084461689,
+   0.007930606603622437,
+   0.008010671474039555,
+   0.006460609845817089,
+   0.006919384002685547,
+   0.009170838631689548
+  ],
+  "train_wall_s": 7129.0,
+  "train_peak_rss_gib": 3.4932212829589844,
+  "target_quality": {
+   "wikitext2": {
+    "ppl_target": 35.353572845458984,
+    "ppl_fp16": 18.12192153930664,
+    "kl_fp16_target": 0.7445197701454163,
+    "top1_fp16_target": 0.6022993922233582
+   },
+   "c4": {
+    "ppl_target": 49.46696090698242,
+    "ppl_fp16": 20.124181747436523,
+    "kl_fp16_target": 0.9617952108383179,
+    "top1_fp16_target": 0.5259784460067749
+   }
+  },
+  "eval_json": "/data/lsh/results_accept/dsweep/d32K256L8_T_emeans_s1/eval/A_bf16.json"
+ },
+ "notes": ""
+}

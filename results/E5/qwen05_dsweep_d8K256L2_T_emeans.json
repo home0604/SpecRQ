@@ -1,0 +1,162 @@
+{
+ "exp": "E5",
+ "run": "qwen05_dsweep_d8K256L2_T_emeans",
+ "time": "2026-11-12T16:20:24",
+ "commit": "c64e3bc",
+ "dirty_files": 11,
+ "host": "shark",
+ "cuda_visible_devices": "6",
+ "tmux_job": "sr-e5_full_d8K256L2_T_emeans",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_0.5b_instruct",
+ "model_revision": "repo=Qwen/Qwen2.5-0.5B-Instruct\nrevision=7ae557604adf67be50417f59c2c2f167def9a775",
+ "config": {
+  "model": "Qwen2.5-0.5B-Instruct",
+  "cfg": "d8K256L2",
+  "d": 8,
+  "K": 256,
+  "L": 2,
+  "objective": "T",
+  "codebook_weights": [
+   0.0,
+   1.0
+  ],
+  "ckpt": "/data/lsh/ckpts/weightvq/dsweep/d8K256L2_T_emeans",
+  "setting": "Hadamard, target-only alpha (last stage 1), wikitext2 1024x4096 calib (val 32), accum fp64, AQ max_epochs 1000 / rel_tol 0.01, beam 1, NO block fine-tune (--finetune_max_epochs 0); activations on GPU (no --offload_activations)",
+  "eval": "PPL@4096 wt2/c4 (main.py, every prefix k); KL/top-1 = draft_target_eval.py kt=L kd=1: 40x512 wt2 + 40x512 c4 windows",
+  "log": "/data/lsh/logs/e5_full_d8K256L2_T_emeans.log",
+  "scripts": [
+   "experiments/15_dsweep/run_dsweep.sh",
+   "experiments/15_dsweep/save_dsweep.py",
+   "experiments/17_emeans/run_full.sh",
+   "experiments/17_emeans/emeans_main.py"
+  ],
+  "seed": 0,
+  "init": "e-means (faiss 1.16.0 faiss.contrib.e_means.QuantizedEmeans, quantizer=None fp32, native torch backend on GPU, CUDA-graph replay off, nepochs=20, seed 0) replaces torch k-means in init_aq_kmeans; codes = exact nearest centroid"
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k2": 49.5104,
+   "wikitext2_k1": 320917.0312,
+   "c4_k2": 75.7257,
+   "c4_k1": 271169.1562
+  },
+  "target_bpw": {
+   "index_bpw": 2.0,
+   "bpw_with_codebooks_scales": 2.044368131868132
+  },
+  "prefix_bpw": {
+   "1": {
+    "index_bpw": 1.0,
+    "bpw_with_codebooks_scales": 1.0289835164835164
+   },
+   "2": {
+    "index_bpw": 2.0,
+    "bpw_with_codebooks_scales": 2.044368131868132
+   }
+  },
+  "layer_time_s": [
+   311.3497908115387,
+   299.51101660728455,
+   299.72950172424316,
+   322.4756889343262,
+   300.98248386383057,
+   308.2762498855591,
+   310.5838520526886,
+   310.4463586807251,
+   312.0088257789612,
+   311.30191564559937,
+   311.0109658241272,
+   310.74021553993225,
+   311.0965323448181,
+   307.152592420578,
+   310.5980281829834,
+   312.34346055984497,
+   310.72507071495056,
+   311.95463728904724,
+   309.8301913738251,
+   319.05934977531433,
+   312.1265358924866,
+   317.8794641494751,
+   318.67339420318604,
+   325.4080593585968
+  ],
+  "out_loss": [
+   0.08641138672828674,
+   0.031851135194301605,
+   0.08658838272094727,
+   0.021452875807881355,
+   0.023456556722521782,
+   0.019215963780879974,
+   0.013335851021111012,
+   0.014429423026740551,
+   0.012013132683932781,
+   0.014835003763437271,
+   0.010479141026735306,
+   0.02538871392607689,
+   0.009528842754662037,
+   0.010545034892857075,
+   0.01020420528948307,
+   0.010854091495275497,
+   0.02637469954788685,
+   0.008320764638483524,
+   0.007637886330485344,
+   0.008123847655951977,
+   0.010941911488771439,
+   0.00884983129799366,
+   0.006683210842311382,
+   0.010293867439031601
+  ],
+  "out_val_loss": [
+   0.08476786315441132,
+   0.03162886202335358,
+   0.09515802562236786,
+   0.018839042633771896,
+   0.021233420819044113,
+   0.018449660390615463,
+   0.012905722483992577,
+   0.013964129611849785,
+   0.011467497795820236,
+   0.01422338280826807,
+   0.00998317077755928,
+   0.0250339824706316,
+   0.008941113948822021,
+   0.009932313114404678,
+   0.009657537564635277,
+   0.010341533459722996,
+   0.025931794196367264,
+   0.008310242556035519,
+   0.007841488346457481,
+   0.008157688193023205,
+   0.011165431700646877,
+   0.009165557101368904,
+   0.006682905368506908,
+   0.009880255907773972
+  ],
+  "train_wall_s": 7635.0,
+  "train_peak_rss_gib": 3.4493637084960938,
+  "target_quality": {
+   "wikitext2": {
+    "ppl_target": 79.15142059326172,
+    "ppl_fp16": 18.12192153930664,
+    "kl_fp16_target": 1.5904597043991089,
+    "top1_fp16_target": 0.43370842933654785
+   },
+   "c4": {
+    "ppl_target": 100.33032989501953,
+    "ppl_fp16": 20.124181747436523,
+    "kl_fp16_target": 1.6688264608383179,
+    "top1_fp16_target": 0.4045009911060333
+   }
+  },
+  "eval_json": "/data/lsh/results_accept/dsweep/d8K256L2_T_emeans/eval/A_bf16.json"
+ },
+ "notes": ""
+}
