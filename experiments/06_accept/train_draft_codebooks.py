@@ -68,6 +68,11 @@ def main():
     ap.add_argument("--checkpoint_layers", action="store_true",
                     help="[specrq] recompute each decoder layer in backward (torch.utils.checkpoint, non-reentrant) so "
                          "only layer inputs are kept (Qwen-32B); gradients unchanged")
+    ap.add_argument("--skip_layers", default=None,
+                    help="[specrq] draft decoder-layer skip used in the STUDENT (draft) forward only: a pattern name of "
+                         "experiments/14_q32b_upper/q32b_upper.py skip_patterns (back<n>, even<n>, even<n>_keep<m>, ...) "
+                         "or a comma list of layer ids; skipped layers pass the residual through (as NestModel.forward "
+                         "layer_ids). Teacher (k_t) runs all layers. Default: no skip (unchanged)")
     a = ap.parse_args()
     torch.manual_seed(a.seed)
     os.makedirs(a.out, exist_ok=True)
@@ -89,6 +94,22 @@ def main():
                 lambda f, *x, **kw: checkpoint(f, *x, use_reentrant=False, **kw) if torch.is_grad_enabled() else f(*x, **kw), f)
         model.config.use_cache = False  # a KV cache would be appended again on recompute
         print("checkpointing", len(model.model.layers), "decoder layers")
+    skip_state = {"on": False}
+    if a.skip_layers:
+        import functools
+        nL = len(model.model.layers)
+        if all(c.isdigit() or c == "," for c in a.skip_layers):
+            skip_ids = sorted(int(x) for x in a.skip_layers.split(","))
+        else:
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "14_q32b_upper"))
+            from q32b_upper import skip_patterns
+            skip_ids = skip_patterns(nL, [a.skip_layers])[a.skip_layers]
+        for i in skip_ids:
+            layer = model.model.layers[i]
+            layer.forward = functools.partial(
+                lambda f, h, *x, **kw: (h,) if skip_state["on"] else f(h, *x, **kw), layer.forward)
+        model.config.use_cache = False  # skipped layers return no cache entry
+        print("draft layer skip:", len(skip_ids), "layers", skip_ids, flush=True)
     for p in model.parameters():
         p.requires_grad_(False)
     n_train = attach_draft_codebooks(model, a.kd, train_scales=not a.no_train_scales)
@@ -123,7 +144,9 @@ def main():
                 with torch.no_grad():
                     lt = model(mb).logits[:, :-1]
                 set_k(model, a.kd)
+                skip_state["on"] = True
                 ld = model(mb).logits[:, :-1]
+                skip_state["on"] = False
                 loss = divergence(lt.reshape(-1, lt.shape[-1]), ld.reshape(-1, ld.shape[-1]), a.div).mean()
                 if not torch.isfinite(loss):
                     raise FloatingPointError(f"non-finite loss at step {step}; rerun with --div fkl and record it")
@@ -143,7 +166,9 @@ def main():
         with torch.no_grad():
             lt = model(ids).logits[:, :-1]
         set_k(model, a.kd)
+        skip_state["on"] = True
         ld = model(ids).logits[:, :-1]
+        skip_state["on"] = False
         start = 0
         loss = divergence(lt[:, start:].reshape(-1, lt.shape[-1]), ld[:, start:].reshape(-1, ld.shape[-1]), a.div).mean()
         if not torch.isfinite(loss):
