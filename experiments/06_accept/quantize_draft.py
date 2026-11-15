@@ -29,13 +29,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--ckpt", required=True)
-    ap.add_argument("--fmt", required=True, choices=list(QBITS))
+    ap.add_argument("--fmt", default=None, choices=list(QBITS))
+    ap.add_argument("--fmt_stages", default=None, help="[specrq] per-stage formats, comma list of length kd (e.g. "
+                    "'nf4,bf16'); stage j of the copy is rounded with its own format and per-codebook scale. "
+                    "Without it (--fmt) the path is unchanged.")
     ap.add_argument("--gran", default="codebook", choices=["codebook", "dim"])
     ap.add_argument("--kd", type=int, default=3)
     ap.add_argument("--out", required=True)
     ap.add_argument("--init_draft", default=None, help="round an existing draft copy (e.g. TV-trained draft_codebooks.pt) "
                     "instead of the target codebooks; its draft scales are kept as stored")
     a = ap.parse_args()
+    assert (a.fmt is None) != (a.fmt_stages is None), "give exactly one of --fmt / --fmt_stages"
+    stage_fmts = a.fmt_stages.split(",") if a.fmt_stages else None
+    if stage_fmts:
+        assert len(stage_fmts) == a.kd and all(f in QBITS for f in stage_fmts), stage_fmts
     model = get_model(a.model, a.ckpt, "auto")
     attach_draft_codebooks(model, a.kd)
     if a.init_draft:
@@ -51,7 +58,16 @@ def main():
             ref = cb.clone()
             z = cb.flatten(1) - cb.flatten(1).mean(1, keepdim=True)  # per draft plane value distribution
             stats["kurt"] += ((z ** 4).mean(1) / (z ** 2).mean(1) ** 2).tolist()  # Pearson kurtosis (normal = 3)
-            if a.fmt != "bf16":
+            if stage_fmts:  # mixed: round each stage plane on its own (codebook gran = one scale per stage anyway)
+                assert a.gran == "codebook"
+                out = cb.clone()
+                for j, f in enumerate(stage_fmts):
+                    if f != "bf16":
+                        s = best_scale(cb[j:j + 1], f, (1, 2, 3))
+                        out[j:j + 1] = round_fmt(cb[j:j + 1], s, f)
+                        stats["bits_scales"] += s.numel() * 16
+                cb = out
+            elif a.fmt != "bf16":
                 dims = (1, 2) if a.gran == "dim" else (1, 2, 3)  # dim: per (codebook, coordinate); codebook: per codebook
                 s = best_scale(cb, a.fmt, dims)
                 cb = round_fmt(cb, s, a.fmt)
@@ -59,7 +75,10 @@ def main():
             # bf16: exact copy of the stored target codebooks (DbD ckpt stores codebooks in the model dtype, bf16)
             m.draft_codebooks.data.copy_(cb)
             stats["rel_mse"].append(((cb - ref) ** 2).sum().item() / (ref ** 2).sum().item())
-            stats["bits_codebook"] += cb.numel() * QBITS[a.fmt]
+            if stage_fmts:
+                stats["bits_codebook"] += sum(cb[j].numel() * QBITS[f] for j, f in enumerate(stage_fmts))
+            else:
+                stats["bits_codebook"] += cb.numel() * QBITS[a.fmt]
             stats["n_linears"] += 1
             stats["n_params_target"] += m.out_features * m.in_features
     sd = draft_state_dict(model)
@@ -69,7 +88,8 @@ def main():
     stats["plane_kurtosis"] = {"mean": ku.mean().item(), "median": ku.median().item(), "p90": ku.quantile(0.9).item(),
                                "max": ku.max().item(), "n_planes": ku.numel(),
                                "median_by_codebook": ku.view(-1, a.kd).median(0).values.tolist()}
-    meta = {"args": vars(a), "q": QBITS[a.fmt], **stats,
+    q = QBITS[a.fmt] if a.fmt else sum(QBITS[f] for f in stage_fmts) / len(stage_fmts)  # mixed: mean bits/value
+    meta = {"args": vars(a), "q": q, **stats,
             "codebook_rel_mse_mean": sum(rm) / len(rm), "codebook_rel_mse_max": max(rm),
             "draft_codebook_overhead_bits_per_weight": (stats["bits_codebook"] + stats["bits_scales"]) / stats["n_params_target"]}
     json.dump(meta, open(a.out.replace(".pt", ".meta.json"), "w"), indent=1)

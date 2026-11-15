@@ -48,16 +48,22 @@ def shrink_codes_(model):
     return n
 
 
-def set_k(model, k):
+def set_k(model, k, use_draft=True):
+    """[specrq] use_draft=False hides the draft-only copies (draft_k -> None), so a target call never takes the draft
+    path even when kd == kt (target-side codebook-format probe); for kd < kt the target path is unchanged."""
     for m in model.modules():
         if isinstance(m, QuantizedLinear):
             m.active_num_codebooks = k
+            if hasattr(m, "draft_k") or hasattr(m, "_draft_k_saved"):
+                if not hasattr(m, "_draft_k_saved"):
+                    m._draft_k_saved = m.draft_k
+                m.draft_k = m._draft_k_saved if use_draft else None
 
 
 @torch.no_grad()
-def logits_at(model, ids, k=None):
+def logits_at(model, ids, k=None, use_draft=True):
     if k is not None:
-        set_k(model, k)
+        set_k(model, k, use_draft)
     return model(ids).logits.float()[0]  # [T, V]
 
 
@@ -134,7 +140,7 @@ def main():
         acc = {k: [] for k in ["tv", "top1", "kl_t_d", "kl_d_t", "nll_t", "nll_d", "nll_ref", "kl_ref_t", "top1_ref_t"]}
         for i in range(n):
             ids = enc[:, i * a.seqlen:(i + 1) * a.seqlen].to(dev)
-            lt, ld = logits_at(q, ids, a.kt), logits_at(q, ids, a.kd)
+            lt, ld = logits_at(q, ids, a.kt, use_draft=False), logits_at(q, ids, a.kd)
             m = token_metrics(lt[:-1], ld[:-1])
             for k in ["tv", "top1", "kl_t_d", "kl_d_t"]:
                 acc[k].append(m[k].cpu())
@@ -171,7 +177,7 @@ def main():
     match_rates, consist, per_prompt = {"instruct": [], "wikitext2": []}, [], []
     for kind, pid in prompts:
         pid = pid.to(dev)
-        set_k(q, a.kt)
+        set_k(q, a.kt, use_draft=False)
         with torch.no_grad():
             # pure greedy: override the model's generation_config (Qwen2.5-Instruct sets repetition_penalty=1.05,
             # top_k/top_p/temperature), otherwise the "greedy" path is not the target argmax path
@@ -181,7 +187,7 @@ def main():
         full = gen[:, :]
         P = pid.shape[1]
         path = full[0, P:]
-        lt, ld = logits_at(q, full, a.kt), logits_at(q, full, a.kd)
+        lt, ld = logits_at(q, full, a.kt, use_draft=False), logits_at(q, full, a.kd)
         pred_t = lt[P - 1:-1].argmax(-1)
         pred_d = ld[P - 1:-1].argmax(-1)
         consist.append((pred_t == path).float().mean().item())  # teacher-forced target argmax vs generated path
