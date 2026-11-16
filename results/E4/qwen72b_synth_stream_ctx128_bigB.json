@@ -1,0 +1,319 @@
+{
+ "exp": "E4",
+ "run": "qwen72b_synth_stream_ctx128_bigB",
+ "time": "2026-11-16T22:37:03",
+ "commit": "46bda9c",
+ "dirty_files": 12,
+ "host": "shark",
+ "cuda_visible_devices": "6",
+ "tmux_job": "sr-e4_q72_stream_v1",
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_72b_instruct",
+ "model_revision": null,
+ "config": {
+  "setting": "SYNTHETIC Qwen2.5-72B (all weights random), nested d8 K256 C1 kernels; GPU-resident stages 1-2 + lm_head bf16 + KV bf16, embedding on CPU (host gather + H2D); stages 3-4 (2 planes) in pinned host RAM streamed per layer into NBUF device slots on a copy stream with event ordering",
+  "linear_4bit": "GPU k2 part + nest_mma over streamed planes 3-4 (same scale), rows > 16 in chunks of 16",
+  "ctx": 128,
+  "nbuf": 3,
+  "Bs": [
+   32,
+   64
+  ],
+  "Ms": [
+   1,
+   2,
+   5,
+   9
+  ],
+  "reps": 3,
+  "reps2": 20,
+  "timing": "eager 4-bit forward with device sync around it (cold start: first NBUF layer chunks are fetched inside the timed forward); draft/AR2 = CUDA-graph step + host embedding round trip",
+  "spec_model": "round = gamma * T_draft_k2(B) + T4(B, gamma+1); throughput = B * tau / round (tau assumed)",
+  "cuda_visible_devices": "6",
+  "co_tenant_start": "none",
+  "co_tenant_end": "none",
+  "host_loadavg_start": [
+   23.02685546875,
+   22.59033203125,
+   21.33935546875
+  ],
+  "host_loadavg_end": [
+   22.83740234375,
+   22.62841796875,
+   21.4453125
+  ],
+  "script": "experiments/22_scale72/stream72.py"
+ },
+ "metrics": {
+  "env_start": {
+   "co_tenants": "none",
+   "gpu_util": "0 %, 3 MiB",
+   "loadavg": [
+    23.02685546875,
+    22.59033203125,
+    21.33935546875
+   ]
+  },
+  "load": {
+   "gpu_alloc_gib_after_load": 19.36975908279419,
+   "layer_chunk_bytes": 219414528,
+   "host_pinned_bytes": 17553162240,
+   "slot_bytes_total": 658243584,
+   "fill_s": 11.149995803833008,
+   "rss_gib": 34.9444465637207,
+   "gpu_total_gib": 23.64971923828125
+  },
+  "copy_only": {
+   "s": {
+    "median": 0.7032137019559741,
+    "min": 0.7032080460339785,
+    "max": 0.7032362939789891,
+    "n": 3
+   },
+   "GBps": 24.961348436721654
+  },
+  "rows": [
+   {
+    "B": 32,
+    "M": 1,
+    "rows": 32,
+    "T4_ms": {
+     "median": 708.9054679963738,
+     "min": 708.821807987988,
+     "max": 712.3880770523101,
+     "n": 3
+    },
+    "T4_compute_ms": {
+     "median": 139.78061801753938,
+     "min": 138.93795106559992,
+     "max": 139.80384496971965,
+     "n": 3
+    },
+    "T_copy_ms": 703.2137019559741,
+    "bound": "streaming",
+    "overlap_eff": 0.9919710507291096
+   },
+   {
+    "B": 32,
+    "M": 2,
+    "rows": 64,
+    "T4_ms": {
+     "median": 710.5612780433148,
+     "min": 710.5338119436055,
+     "max": 710.604348918423,
+     "n": 3
+    },
+    "T4_compute_ms": {
+     "median": 259.14900097995996,
+     "min": 258.0229619052261,
+     "max": 259.3714080285281,
+     "n": 3
+    },
+    "T_copy_ms": 703.2137019559741,
+    "bound": "streaming",
+    "overlap_eff": 0.989659475805417
+   },
+   {
+    "B": 32,
+    "M": 5,
+    "rows": 160,
+    "T4_ms": {
+     "median": 716.6954088024795,
+     "min": 716.5381480008364,
+     "max": 718.6424131505191,
+     "n": 3
+    },
+    "T4_compute_ms": {
+     "median": 620.6729589030147,
+     "min": 620.5216748639941,
+     "max": 620.9149500355124,
+     "n": 3
+    },
+    "T_copy_ms": 703.2137019559741,
+    "bound": "streaming",
+    "overlap_eff": 0.9811890704462138
+   },
+   {
+    "B": 32,
+    "M": 9,
+    "rows": 288,
+    "T4_ms": {
+     "median": 1118.1347300298512,
+     "min": 1115.5629518907517,
+     "max": 1118.256552843377,
+     "n": 3
+    },
+    "T4_compute_ms": {
+     "median": 1107.5949780642986,
+     "min": 1107.5063860043883,
+     "max": 1107.8457268886268,
+     "n": 3
+    },
+    "T_copy_ms": 703.2137019559741,
+    "bound": "compute",
+    "overlap_eff": 0.990573808609566
+   },
+   {
+    "B": 64,
+    "M": 1,
+    "rows": 64,
+    "T4_ms": {
+     "median": 710.5590968858451,
+     "min": 710.4989010840654,
+     "max": 710.6253718957305,
+     "n": 3
+    },
+    "T4_compute_ms": {
+     "median": 263.78674199804664,
+     "min": 262.6267848536372,
+     "max": 263.89836706221104,
+     "n": 3
+    },
+    "T_copy_ms": 703.2137019559741,
+    "bound": "streaming",
+    "overlap_eff": 0.9896625136993341
+   },
+   {
+    "B": 64,
+    "M": 2,
+    "rows": 128,
+    "T4_ms": {
+     "median": 713.8436438981444,
+     "min": 713.8048720080405,
+     "max": 713.9765340834856,
+     "n": 3
+    },
+    "T4_compute_ms": {
+     "median": 504.9144399818033,
+     "min": 504.03818394988775,
+     "max": 504.9789850600064,
+     "n": 3
+    },
+    "T_copy_ms": 703.2137019559741,
+    "bound": "streaming",
+    "overlap_eff": 0.9851088651793235
+   },
+   {
+    "B": 64,
+    "M": 5,
+    "rows": 320,
+    "T4_ms": {
+     "median": 1245.9952482022345,
+     "min": 1245.1114899013191,
+     "max": 1246.0573671851307,
+     "n": 3
+    },
+    "T4_compute_ms": {
+     "median": 1235.6173128355294,
+     "min": 1235.3557839524,
+     "max": 1236.1332629807293,
+     "n": 3
+    },
+    "T_copy_ms": 703.2137019559741,
+    "bound": "compute",
+    "overlap_eff": 0.9916709671391776
+   }
+  ],
+  "t2": [
+   {
+    "B": 32,
+    "k": 2,
+    "step_ms": {
+     "median": 73.90747196041048,
+     "min": 73.84825590997934,
+     "max": 91.5992590598762,
+     "n": 20
+    }
+   },
+   {
+    "B": 32,
+    "k": 1,
+    "step_ms": {
+     "median": 57.51352850347757,
+     "min": 57.47465114109218,
+     "max": 57.634443044662476,
+     "n": 20
+    }
+   }
+  ],
+  "skipped": [
+   {
+    "B": 64,
+    "oom": "CUDA out of memory. Tried to allocate 168.00 MiB. GPU 0 has a total capacity of 23.65 GiB of which 140.69 MiB is free. Including non-PyTorch memory, this process has 23.44 GiB memory in use. Of the al"
+   }
+  ],
+  "summary": [
+   {
+    "B": 32,
+    "gamma": 1,
+    "round_ms": 784.4687500037253,
+    "T_draft_k2_ms": 73.90747196041048,
+    "T4_verify_ms": 710.5612780433148,
+    "AR4_stream_tok_s": 45.14001012073402,
+    "AR2_gpu_tok_s": 432.9738137591992,
+    "tau_breakeven_vs_AR4_stream": 1.1065914785802415,
+    "tau_breakeven_vs_AR2_gpu": 10.614200827000772,
+    "spec_tok_s_at_tau": {
+     "1.5": 61.18790582769812,
+     "2.0": 81.58387443693083
+    }
+   },
+   {
+    "B": 32,
+    "gamma": 4,
+    "round_ms": 1012.3252966441214,
+    "T_draft_k2_ms": 73.90747196041048,
+    "T4_verify_ms": 716.6954088024795,
+    "AR4_stream_tok_s": 45.14001012073402,
+    "AR2_gpu_tok_s": 432.9738137591992,
+    "tau_breakeven_vs_AR4_stream": 1.4280116917497097,
+    "tau_breakeven_vs_AR2_gpu": 13.697198264153684,
+    "spec_tok_s_at_tau": {
+     "1.5": 47.41558880245407,
+     "2.0": 63.22078506993876,
+     "2.5": 79.02598133742346,
+     "3.0": 94.83117760490813,
+     "4.0": 126.44157013987753,
+     "5.0": 158.05196267484692
+    }
+   },
+   {
+    "B": 32,
+    "gamma": 8,
+    "round_ms": 1709.394505713135,
+    "T_draft_k2_ms": 73.90747196041048,
+    "T4_verify_ms": 1118.1347300298512,
+    "AR4_stream_tok_s": 45.14001012073402,
+    "AR2_gpu_tok_s": 432.9738137591992,
+    "tau_breakeven_vs_AR4_stream": 2.4113151652568137,
+    "tau_breakeven_vs_AR2_gpu": 23.128845573676163,
+    "spec_tok_s_at_tau": {
+     "1.5": 28.08011833405015,
+     "2.0": 37.440157778733536,
+     "2.5": 46.800197223416916,
+     "3.0": 56.1602366681003,
+     "4.0": 74.88031555746707,
+     "5.0": 93.60039444683383
+    }
+   }
+  ],
+  "peak_gib": 22.812642574310303,
+  "env_end": {
+   "co_tenants": "none",
+   "gpu_util": "0 %, 24076 MiB",
+   "loadavg": [
+    22.83740234375,
+    22.62841796875,
+    21.4453125
+   ]
+  }
+ },
+ "notes": ""
+}
