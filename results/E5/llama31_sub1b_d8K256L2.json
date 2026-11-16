@@ -1,0 +1,153 @@
+{
+ "exp": "E5",
+ "run": "llama31_sub1b_d8K256L2",
+ "time": "2026-11-17T07:05:30",
+ "commit": "7b60fbb",
+ "dirty_files": 10,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "model": "Llama-3.1-8B-Instruct",
+  "cfg": "d8K256L2",
+  "d": 8,
+  "code_bits": [
+   8,
+   8
+  ],
+  "K": [
+   256,
+   256
+  ],
+  "L": 2,
+  "objective": "T (target-only alpha 0..0,1)",
+  "ckpt": "/data/lsh/ckpts/weightvq/sub1b8/d8K256L2_N_noft_n192",
+  "setting": "Hadamard, pile_val 192x4096 calib (val 32), accum fp32, AQ rel_tol 0.01, beam 1, block FT 5 epochs (batch 32, lr 1e-5, early stop 3, keep best), seed 0, activations on GPU (= dsweep_llama *_T_FT_n192 recipe)",
+  "draft_A": "target-copy prefix codebooks/scales (kd stages)",
+  "draft_B": "draft-only codebooks+scales of the kd prefix, TV-trained vs full target (use_draft=False teacher, --check_teacher), pile_val_heldout 1024x512, 300 steps, batch 4, lr 1e-4, micro_batch 1",
+  "eval": "draft_target_eval kt=L: TV/top-1 40x512 wt2 + 40x512 c4 windows; tau = greedy simulation tokens/iter, 8 chat + 8 wt2 prompts x 128 tok (shared KV, not measured decoding); target PPL@4096 wt2/c4 from main.py",
+  "cost": "SYNTHETIC cachefit timing (random weights, same kernel config, q16, vd 32768), c = t_draft/T_AR, break-even tau = round_ms/T_AR (own target AR); modeled [I], not measured spec decoding",
+  "scripts": [
+   "experiments/23_sub1b8/train_sub1b.sh",
+   "experiments/23_sub1b8/eval_sub1b.sh",
+   "experiments/23_sub1b8/save_sub1b.py"
+  ],
+  "note": "nested alpha [.5,.5], noFT"
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k2": 18.166,
+   "c4_k2": 23.7041
+  },
+  "train_wall_s": 10670.0,
+  "train_peak_rss_gib": 14.083045959472656,
+  "kd": {
+   "1": {
+    "bits": [
+     8
+    ],
+    "bpw": {
+     "index_bpw": 1.0,
+     "bpw_with_codebooks_scales": 1.0042067307692308
+    },
+    "A": {
+     "wt2_tv": 0.9721546769142151,
+     "wt2_top1": 0.00019569472351577133,
+     "c4_tv": 0.9739729762077332,
+     "c4_top1": 4.892368087894283e-05,
+     "wt2_ppl_draft_512": 1430685.25,
+     "c4_ppl_draft_512": 826749.125,
+     "tau_instruct_g1": 1.0,
+     "tau_instruct_g2": 1.0,
+     "tau_instruct_g4": 1.0,
+     "tau_wikitext2_g1": 1.0,
+     "tau_wikitext2_g2": 1.0,
+     "tau_wikitext2_g4": 1.0,
+     "eval_json": "/data/lsh/results_accept/sub1b8/baseN_d8K256L2/kd1/eval/A_bf16.json"
+    },
+    "B": {
+     "wt2_tv": 0.4834055006504059,
+     "wt2_top1": 0.4276418685913086,
+     "c4_tv": 0.42693400382995605,
+     "c4_top1": 0.5068004131317139,
+     "wt2_ppl_draft_512": 162.11614990234375,
+     "c4_ppl_draft_512": 104.2247085571289,
+     "tau_instruct_g1": 1.5472061657032756,
+     "tau_instruct_g2": 1.8004484304932735,
+     "tau_instruct_g4": 2.012531328320802,
+     "tau_wikitext2_g1": 1.8686131386861313,
+     "tau_wikitext2_g2": 2.680628272251309,
+     "tau_wikitext2_g4": 3.631205673758865,
+     "eval_json": "/data/lsh/results_accept/sub1b8/baseN_d8K256L2/kd1/eval/B_bf16.json"
+    },
+    "B_train": {
+     "wall_s": 2401.1361763477325,
+     "final_tv": 0.40198107063770294,
+     "peak_mem_gib": 8.344955921173096,
+     "teacher_check": {
+      "teacher_eq_plain_kt": true,
+      "teacher_eq_plain_allk": true,
+      "teacher_max_abs_diff_plain_kt": 0.0,
+      "student_max_abs_diff_teacher": 24.890625
+     },
+     "lr": 0.0001
+    },
+    "cost": {
+     "t_draft_ms": 3.5699967654260596,
+     "c": 0.5939032713266154,
+     "tau_req_g1": 1.6832873260414516,
+     "round_ms_g1": 10.118365396148576,
+     "tau_req_g2": 2.308881448246212,
+     "round_ms_g2": 13.878858224807058,
+     "tau_req_g4": 3.556072782183807,
+     "round_ms_g4": 21.37581815580566
+    }
+   }
+  },
+  "timing_synthetic": {
+   "json": "/hai/home/lsh/SpecRQ/experiments/23_sub1b8/../../results/E4/llama31_sub1b_cachefit_d8K256L2_q16.json",
+   "T_ar_ms": 6.011074425388626,
+   "kd": {
+    "1": {
+     "t_draft_ms": 3.5699967654260596,
+     "c": 0.5939032713266154,
+     "tau_req_g1": 1.6832873260414516,
+     "round_ms_g1": 10.118365396148576,
+     "tau_req_g2": 2.308881448246212,
+     "round_ms_g2": 13.878858224807058,
+     "tau_req_g4": 3.556072782183807,
+     "round_ms_g4": 21.37581815580566
+    }
+   }
+  },
+  "target_quality": {
+   "wikitext2": {
+    "ppl_target": 28.54701042175293,
+    "ppl_fp16": 9.298919677734375,
+    "kl_fp16_target": 1.1782028675079346,
+    "top1_fp16_target": 0.5675635933876038
+   },
+   "c4": {
+    "ppl_target": 28.427902221679688,
+    "ppl_fp16": 10.553763389587402,
+    "kl_fp16_target": 1.120753526687622,
+    "top1_fp16_target": 0.5567025542259216
+   }
+  },
+  "target_bpw": {
+   "index_bpw": 2.0,
+   "bpw_with_codebooks_scales": 2.0052584134615383
+  }
+ },
+ "notes": ""
+}

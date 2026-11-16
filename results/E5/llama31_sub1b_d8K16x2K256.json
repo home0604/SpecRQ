@@ -1,0 +1,227 @@
+{
+ "exp": "E5",
+ "run": "llama31_sub1b_d8K16x2K256",
+ "time": "2026-11-17T07:05:23",
+ "commit": "7b60fbb",
+ "dirty_files": 9,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "model": "Llama-3.1-8B-Instruct",
+  "cfg": "d8K16x2K256",
+  "d": 8,
+  "code_bits": [
+   4,
+   4,
+   8
+  ],
+  "K": [
+   16,
+   16,
+   256
+  ],
+  "L": 3,
+  "objective": "T (target-only alpha 0..0,1)",
+  "ckpt": "/data/lsh/ckpts/weightvq/sub1b8/d8K16K16K256_N_noft_n192",
+  "setting": "Hadamard, pile_val 192x4096 calib (val 32), accum fp32, AQ rel_tol 0.01, beam 1, block FT 5 epochs (batch 32, lr 1e-5, early stop 3, keep best), seed 0, activations on GPU (= dsweep_llama *_T_FT_n192 recipe)",
+  "draft_A": "target-copy prefix codebooks/scales (kd stages)",
+  "draft_B": "draft-only codebooks+scales of the kd prefix, TV-trained vs full target (use_draft=False teacher, --check_teacher), pile_val_heldout 1024x512, 300 steps, batch 4, lr 1e-4, micro_batch 1",
+  "eval": "draft_target_eval kt=L: TV/top-1 40x512 wt2 + 40x512 c4 windows; tau = greedy simulation tokens/iter, 8 chat + 8 wt2 prompts x 128 tok (shared KV, not measured decoding); target PPL@4096 wt2/c4 from main.py",
+  "cost": "SYNTHETIC cachefit timing (random weights, same kernel config, q16, vd 32768), c = t_draft/T_AR, break-even tau = round_ms/T_AR (own target AR); modeled [I], not measured spec decoding",
+  "scripts": [
+   "experiments/23_sub1b8/train_sub1b.sh",
+   "experiments/23_sub1b8/eval_sub1b.sh",
+   "experiments/23_sub1b8/save_sub1b.py"
+  ],
+  "note": "nested alpha [1/3,1/3,1/3], noFT"
+ },
+ "metrics": {
+  "ppl_4096": {
+   "wikitext2_k3": 22.4571,
+   "c4_k3": 28.3766
+  },
+  "train_wall_s": 12149.0,
+  "train_peak_rss_gib": 17.243019104003906,
+  "kd": {
+   "1": {
+    "bits": [
+     4
+    ],
+    "bpw": {
+     "index_bpw": 0.5,
+     "bpw_with_codebooks_scales": 0.5032207782451923
+    },
+    "A": {
+     "wt2_tv": 0.9644635319709778,
+     "wt2_top1": 0.0,
+     "c4_tv": 0.9652212858200073,
+     "c4_top1": 0.0,
+     "wt2_ppl_draft_512": 1012454.875,
+     "c4_ppl_draft_512": 647155.25,
+     "tau_instruct_g1": 1.0,
+     "tau_instruct_g2": 1.0,
+     "tau_instruct_g4": 1.0,
+     "tau_wikitext2_g1": 1.0,
+     "tau_wikitext2_g2": 1.0,
+     "tau_wikitext2_g4": 1.0,
+     "eval_json": "/data/lsh/results_accept/sub1b8/SN_d8K16K16K256/kd1/eval/A_bf16.json"
+    },
+    "B": {
+     "wt2_tv": 0.8082268238067627,
+     "wt2_top1": 0.0977005884051323,
+     "c4_tv": 0.7813946604728699,
+     "c4_top1": 0.1159980446100235,
+     "wt2_ppl_draft_512": 11328.4501953125,
+     "c4_ppl_draft_512": 6002.93994140625,
+     "tau_instruct_g1": 1.034431137724551,
+     "tau_instruct_g2": 1.034431137724551,
+     "tau_instruct_g4": 1.034431137724551,
+     "tau_wikitext2_g1": 1.199063231850117,
+     "tau_wikitext2_g2": 1.2219570405727924,
+     "tau_wikitext2_g4": 1.2219570405727924,
+     "eval_json": "/data/lsh/results_accept/sub1b8/SN_d8K16K16K256/kd1/eval/B_bf16.json"
+    },
+    "B_train": {
+     "wall_s": 2839.1997950077057,
+     "final_tv": 0.820772334933281,
+     "peak_mem_gib": 9.263046741485596,
+     "teacher_check": {
+      "teacher_eq_plain_kt": true,
+      "teacher_eq_plain_allk": true,
+      "teacher_max_abs_diff_plain_kt": 0.0,
+      "student_max_abs_diff_teacher": 29.703125
+     },
+     "lr": 0.0001
+    },
+    "cost": {
+     "t_draft_ms": 3.261021598733551,
+     "c": 0.44806660481292665,
+     "tau_req_g1": 1.4983403671844027,
+     "round_ms_g1": 10.904897279016614,
+     "tau_req_g2": 1.9727699528984548,
+     "round_ms_g2": 14.357788231998212,
+     "tau_req_g4": 2.915238994459923,
+     "round_ms_g4": 21.217062874777813
+    }
+   },
+   "2": {
+    "bits": [
+     4,
+     4
+    ],
+    "bpw": {
+     "index_bpw": 1.0,
+     "bpw_with_codebooks_scales": 1.0032865084134615
+    },
+    "A": {
+     "wt2_tv": 0.9616499543190002,
+     "wt2_top1": 0.0,
+     "c4_tv": 0.9648945927619934,
+     "c4_top1": 0.0,
+     "wt2_ppl_draft_512": 1246778.625,
+     "c4_ppl_draft_512": 1120729.125,
+     "tau_instruct_g1": 1.0,
+     "tau_instruct_g2": 1.0,
+     "tau_instruct_g4": 1.0,
+     "tau_wikitext2_g1": 1.0,
+     "tau_wikitext2_g2": 1.0,
+     "tau_wikitext2_g4": 1.0,
+     "eval_json": "/data/lsh/results_accept/sub1b8/SN_d8K16K16K256/kd2/eval/A_bf16.json"
+    },
+    "B": {
+     "wt2_tv": 0.6715049147605896,
+     "wt2_top1": 0.21257337927818298,
+     "c4_tv": 0.61651211977005,
+     "c4_top1": 0.27945205569267273,
+     "wt2_ppl_draft_512": 1524.163818359375,
+     "c4_ppl_draft_512": 757.4746704101562,
+     "tau_instruct_g1": 1.2295373665480427,
+     "tau_instruct_g2": 1.291588785046729,
+     "tau_instruct_g4": 1.294007490636704,
+     "tau_wikitext2_g1": 1.3819163292847503,
+     "tau_wikitext2_g2": 1.7152428810720268,
+     "tau_wikitext2_g4": 1.7152428810720268,
+     "eval_json": "/data/lsh/results_accept/sub1b8/SN_d8K16K16K256/kd2/eval/B_bf16.json"
+    },
+    "B_train": {
+     "wall_s": 3685.4141681194305,
+     "final_tv": 0.6597243249416351,
+     "peak_mem_gib": 9.270615100860596,
+     "teacher_check": {
+      "teacher_eq_plain_kt": true,
+      "teacher_eq_plain_allk": true,
+      "teacher_max_abs_diff_plain_kt": 0.0,
+      "student_max_abs_diff_teacher": 31.3125
+     },
+     "lr": 0.0001
+    },
+    "cost": {
+     "t_draft_ms": 4.542459330455524,
+     "c": 0.6241370282516511,
+     "tau_req_g1": 1.674410790623127,
+     "round_ms_g1": 12.186335010738587,
+     "tau_req_g2": 2.3249107997759038,
+     "round_ms_g2": 16.92066369544216,
+     "tau_req_g4": 3.6195206882148208,
+     "round_ms_g4": 26.342813801665706
+    }
+   }
+  },
+  "timing_synthetic": {
+   "json": "/hai/home/lsh/SpecRQ/experiments/23_sub1b8/../../results/E4/llama31_sub1b_cachefit_d8K16x2K256_q16.json",
+   "T_ar_ms": 7.277984040107314,
+   "kd": {
+    "1": {
+     "t_draft_ms": 3.261021598733551,
+     "c": 0.44806660481292665,
+     "tau_req_g1": 1.4983403671844027,
+     "round_ms_g1": 10.904897279016614,
+     "tau_req_g2": 1.9727699528984548,
+     "round_ms_g2": 14.357788231998212,
+     "tau_req_g4": 2.915238994459923,
+     "round_ms_g4": 21.217062874777813
+    },
+    "2": {
+     "t_draft_ms": 4.542459330455524,
+     "c": 0.6241370282516511,
+     "tau_req_g1": 1.674410790623127,
+     "round_ms_g1": 12.186335010738587,
+     "tau_req_g2": 2.3249107997759038,
+     "round_ms_g2": 16.92066369544216,
+     "tau_req_g4": 3.6195206882148208,
+     "round_ms_g4": 26.342813801665706
+    }
+   }
+  },
+  "target_quality": {
+   "wikitext2": {
+    "ppl_target": 36.8378791809082,
+    "ppl_fp16": 9.298919677734375,
+    "kl_fp16_target": 1.4338321685791016,
+    "top1_fp16_target": 0.521330714225769
+   },
+   "c4": {
+    "ppl_target": 35.13186264038086,
+    "ppl_fp16": 10.553763389587402,
+    "kl_fp16_target": 1.3499724864959717,
+    "top1_fp16_target": 0.5150195956230164
+   }
+  },
+  "target_bpw": {
+   "index_bpw": 2.0,
+   "bpw_with_codebooks_scales": 2.004338191105769
+  }
+ },
+ "notes": ""
+}

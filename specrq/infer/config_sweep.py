@@ -38,6 +38,8 @@ CONFIGS = {  # name -> (d, per-plane bits)
     "d16K4096x2K256": (16, [12, 12, 8]), "d16K65536L2": (16, [16, 16]),
     # E4 cachefit2: per-plane 4/8/12 mixes (nestg B = 0); per-plane codebook q via --qpats
     "d8K16K4096": (8, [4, 12]), "d8K256K16x2": (8, [8, 4, 4]),
+    # E5 sub1b8: sub-1-bit front planes (K16, K16, K256)
+    "d8K16x2K256": (8, [4, 4, 8]),
 }
 SHAPES = {"q": (4096, 4096), "k": (1024, 4096), "o": (4096, 4096), "gate": (14336, 4096), "down": (4096, 14336)}
 
