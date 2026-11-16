@@ -1,0 +1,947 @@
+{
+ "exp": "E4",
+ "run": "qwen72b_synth_offload",
+ "time": "2026-11-16T20:56:33",
+ "commit": "8e27289",
+ "dirty_files": 11,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/qwen2.5_72b_instruct",
+ "model_revision": null,
+ "config": {
+  "setting": "SYNTHETIC Qwen2.5-72B shapes, nested d8 K256: stages 1-2 GPU (C1 kernels, RTX 4090 GPU6, NUMA node1), stages 3-4 = 2 residual planes on CPU (node1, perm_i8_tile int8-LUT kernel, 16 OMP threads, cores 16-31)",
+  "cpu_bench": "experiments/22_scale72/bench_offload72.py --target cpu --part stream sweep --kinds 3 --planes 2 --Ms 1 2 3 4 5 8 --reps 5 (OMP_NUM_THREADS=16, OMP_PLACES=cores); the 32-thread run was aborted (15 s per sweep under co-load)",
+  "pcie_bench": "bench_offload72.py --target pcie --Ms 1..5 (bench_gpu.part_pcie with 72B stage sizes)",
+  "split_forward": "q72_synth.py --mode split: REAL eager split forward; per linear (7 per layer, q/k/v separate) synchronous D2H of the rotated input, CPU LUT kernels for planes 3 and 4, H2D add; GPU k2 part runs async meanwhile. Not optimized (no q/k/v or gate/up sharing of the D2H, no pipelining).",
+  "spec_round": "gamma k2 draft steps (one CUDA graph) + one eager k4 split verify of gamma+1 rows, forced acceptance (round time only); break-even tau = round_ms / T_AR",
+  "load_note": "node1 was heavily co-loaded during the CPU bench and the split run (load average 34-56; on node1: train_draft_codebooks ~690% CPU, draft_target_eval ~460% CPU, xtx_dump ~100% CPU); CPU-side numbers are pessimistic and noisy",
+  "load_records": {
+   "load_after_t16.txt": "2026-11-16T20:50:05+09:00\n 20:50:05 up 23 days,  8:00, 112 users,  load average: 37.75, 34.36, 33.79\n    PID USER     PSR %CPU   RSS     ELAPSED COMMAND\n3398062 lsh       58  687 3745144     18:45 python experiments/06_accept/train_draft_codebooks.py --model /data/models/llama3.1_8b_instruct --ckpt /data/lsh/ckp\n3415393 lsh       63  494 2861948     04:24 python experiments/06_accept/draft_target_eval.py --model /data/models/llama3.1_8b_instruct --ckpt /data/lsh/ckpts/w\n3295894 lsh       18 98.6 41642708 01:11:08 python experiments/21_q32b_rq4/xtx_dump.py --out /data/lsh/ckpts/weightvq/scale/qwen32b_xtx_fp16calib\n3301686 lsh       59 11.5 531728   01:08:24 /hai/home/lsh/.conda/envs/nestvq/bin/python3.11 /hai/home/lsh/.conda/envs/nestvq/bin/hf download Qwen/Qwen2.5-72B-In\n    407 root      29  7.5     0 23-08:00:30 [kcompactd1]\n 356650 lsh       30  4.9 460088 4-06:52:33 /hai/home/lsh/.cursor-server/bin/linux-x64/5d4df965746c5d09740842fc0f1331ba1c157830/node --dns-result-order=ipv4firs\n3412826 root      52  0.4     0       06:25 [kworker/u130:4-events_unbound]\n3397088 root      16  0.2     0       19:33 [kworker/u130:1-rpciod]\n    531 root      61  0.1     0 23-08:00:29 [kswapd1]\n 620645 root      61  0.1 31436  6-05:43:42 /usr/lib/snapd/snapd\n2774226 root      48  0.1     0 14-09:13:58 [irq/339-nvidia]\n",
+   "load_start.txt": "2026-11-16T20:49:34+09:00\n 20:49:34 up 23 days,  8:00, 112 users,  load average: 34.13, 33.41, 33.48\n    PID USER     PSR %CPU   RSS     ELAPSED COMMAND\n3398062 lsh       24  688 3745144     18:15 python experiments/06_accept/train_draft_codebooks.py --model /data/models/llama3.1_8b_instruct --ckpt /data/lsh/ckp\n3415393 lsh       31  456 2861948     03:54 python experiments/06_accept/draft_target_eval.py --model /data/models/llama3.1_8b_instruct --ckpt /data/lsh/ckpts/w\n3295894 lsh       48 98.6 41642708 01:10:38 python experiments/21_q32b_rq4/xtx_dump.py --out /data/lsh/ckpts/weightvq/scale/qwen32b_xtx_fp16calib\n3301686 lsh       59 11.5 531728   01:07:54 /hai/home/lsh/.conda/envs/nestvq/bin/python3.11 /hai/home/lsh/.conda/envs/nestvq/bin/hf download Qwen/Qwen2.5-72B-In\n    407 root      58  7.5     0 23-08:00:00 [kcompactd1]\n 358091 lsh       63  5.0 472132 4-06:51:41 /hai/home/lsh/.cursor-server/bin/linux-x64/5d4df965746c5d09740842fc0f1331ba1c157830/node --dns-result-order=ipv4firs\n3421436 phj       24  5.0 11824       00:01 /usr/bin/python3 /usr/sbin/nfsiostat 5 2 /hai\n3597674 lsh       16  5.0 445560 2-07:52:19 /hai/home/lsh/.cursor-server/bin/linux-x64/5d4df965746c5d09740842fc0f1331ba1c157830/node --dns-result-order=ipv4firs\n 356650 lsh       16  4.9 460496 4-06:52:03 /hai/home/lsh/.cursor-server/bin/linux-x64/5d4df965746c5d09740842fc0f1331ba1c157830/node --dns-result-order=ipv4firs\n 667497 phh       56  1.0 246800 6-05:04:24 claude --teleport session_01QNYhBYsD75g5GCbZPRMZqb\n 358344 lsh       30  0.9 279180 4-06:51:33 claude\n"
+  },
+  "cpu_loadavg": [
+   [
+    34.1259765625,
+    33.4111328125,
+    33.4814453125
+   ],
+   [
+    37.75146484375,
+    34.3603515625,
+    33.794921875
+   ]
+  ],
+  "split_loadavg": [
+   [
+    52.2158203125,
+    46.857421875,
+    39.22802734375
+   ],
+   [
+    41.736328125,
+    44.328125,
+    39.10693359375
+   ]
+  ]
+ },
+ "metrics": {
+  "T_cpu_2planes_ms": {
+   "1": {
+    "wall_ms": 327.521154191345,
+    "min_ms": 313.59529099427164,
+    "max_ms": 371.17444700561464,
+    "GBps_codes": 53.59398016088164
+   },
+   "2": {
+    "wall_ms": 344.9741960503161,
+    "min_ms": 319.33567114174366,
+    "max_ms": 421.0325898602605,
+    "GBps_codes": 50.88253684179843
+   },
+   "3": {
+    "wall_ms": 393.2664431631565,
+    "min_ms": 350.3817559685558,
+    "max_ms": 508.23772698640823,
+    "GBps_codes": 44.634274154730335
+   },
+   "4": {
+    "wall_ms": 433.56348806992173,
+    "min_ms": 414.84443307854235,
+    "max_ms": 476.69621906243265,
+    "GBps_codes": 40.48579440612205
+   },
+   "5": {
+    "wall_ms": 768.4023720212281,
+    "min_ms": 663.5619518347085,
+    "max_ms": 835.0063799880445,
+    "GBps_codes": 22.8437116791137
+   },
+   "8": {
+    "wall_ms": 925.7440380752087,
+    "min_ms": 853.3356699626893,
+    "max_ms": 1082.5893650762737,
+    "GBps_codes": 18.961139924267012
+   }
+  },
+  "cpu_stream": {
+   "bytes": 4294967296,
+   "s": {
+    "median": 0.05151039105840027,
+    "min": 0.05045706615783274,
+    "max": 0.05506297992542386,
+    "n": 5
+   },
+   "GBps": {
+    "median": 83.38059967610323
+   },
+   "GBps_best": 85.12122529211436,
+   "GBps_worst": 78.00099634667454
+  },
+  "T_pcie_4stage_x80_ms": {
+   "1": 11.09219565987587,
+   "2": 8.668757136911154,
+   "3": 8.59256200492382,
+   "4": 9.842471312731504,
+   "5": 10.276964027434587
+  },
+  "pcie_raw": {
+   "stages": {
+    "qkv_M1": {
+     "roundtrip_us": {
+      "median": 49.16639532893896,
+      "min": 42.08467551507056,
+      "max": 63.25313937850296,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 17.85191474482417,
+      "min": 17.37913000397384,
+      "max": 18.968889489769936,
+      "n": 5
+     },
+     "bytes_d2h": 16384,
+     "bytes_h2d": 20480
+    },
+    "o_M1": {
+     "roundtrip_us": {
+      "median": 32.065099803730845,
+      "min": 29.94986018165946,
+      "max": 34.14857434108853,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 14.260325115174055,
+      "min": 13.514984166249633,
+      "max": 14.389670686796308,
+      "n": 5
+     },
+     "bytes_d2h": 16384,
+     "bytes_h2d": 16384
+    },
+    "gateup_M1": {
+     "roundtrip_us": {
+      "median": 27.489589992910624,
+      "min": 26.923950063064694,
+      "max": 28.761214343830943,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 13.394494308158755,
+      "min": 13.121819356456399,
+      "max": 13.811164535582066,
+      "n": 5
+     },
+     "bytes_d2h": 16384,
+     "bytes_h2d": 118272
+    },
+    "down_M1": {
+     "roundtrip_us": {
+      "median": 29.931360622867942,
+      "min": 29.458339558914304,
+      "max": 30.03504010848701,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 13.522610533982515,
+      "min": 12.917175190523267,
+      "max": 13.826179783791304,
+      "n": 5
+     },
+     "bytes_d2h": 59136,
+     "bytes_h2d": 16384
+    },
+    "qkv_M2": {
+     "roundtrip_us": {
+      "median": 27.994479751214385,
+      "min": 27.717784978449345,
+      "max": 28.515850426629186,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 13.571574818342924,
+      "min": 13.214345090091228,
+      "max": 13.620654353871942,
+      "n": 5
+     },
+     "bytes_d2h": 32768,
+     "bytes_h2d": 40960
+    },
+    "o_M2": {
+     "roundtrip_us": {
+      "median": 27.643064968287945,
+      "min": 27.258945629000664,
+      "max": 29.010690050199628,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 13.411964755505323,
+      "min": 12.948870426043868,
+      "max": 13.850800460204482,
+      "n": 5
+     },
+     "bytes_d2h": 32768,
+     "bytes_h2d": 32768
+    },
+    "gateup_M2": {
+     "roundtrip_us": {
+      "median": 28.86091941036284,
+      "min": 27.44903089478612,
+      "max": 28.9096194319427,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 9.314185008406639,
+      "min": 9.229615097865462,
+      "max": 9.54348943196237,
+      "n": 5
+     },
+     "bytes_d2h": 32768,
+     "bytes_h2d": 236544
+    },
+    "down_M2": {
+     "roundtrip_us": {
+      "median": 23.861000081524253,
+      "min": 23.741800105199218,
+      "max": 23.9045696798712,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 9.308760054409504,
+      "min": 9.195110760629177,
+      "max": 9.550910908728838,
+      "n": 5
+     },
+     "bytes_d2h": 118272,
+     "bytes_h2d": 32768
+    },
+    "qkv_M3": {
+     "roundtrip_us": {
+      "median": 21.223494550213218,
+      "min": 21.177324233576655,
+      "max": 21.26661012880504,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 9.201329667121172,
+      "min": 9.05706430785358,
+      "max": 9.444460738450289,
+      "n": 5
+     },
+     "bytes_d2h": 49152,
+     "bytes_h2d": 61440
+    },
+    "o_M3": {
+     "roundtrip_us": {
+      "median": 21.204035729169846,
+      "min": 21.15879557095468,
+      "max": 21.242485381662846,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 9.25799016840756,
+      "min": 9.195900056511164,
+      "max": 9.51417488977313,
+      "n": 5
+     },
+     "bytes_d2h": 49152,
+     "bytes_h2d": 49152
+    },
+    "gateup_M3": {
+     "roundtrip_us": {
+      "median": 38.88399456627667,
+      "min": 37.70150011405349,
+      "max": 55.66948442719877,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 9.067220380529761,
+      "min": 9.021810255944729,
+      "max": 9.10033006221056,
+      "n": 5
+     },
+     "bytes_d2h": 49152,
+     "bytes_h2d": 354816
+    },
+    "down_M3": {
+     "roundtrip_us": {
+      "median": 26.095500215888023,
+      "min": 26.07523463666439,
+      "max": 26.213364908471704,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 9.021314326673746,
+      "min": 8.910114411264658,
+      "max": 9.112724801525474,
+      "n": 5
+     },
+     "bytes_d2h": 177408,
+     "bytes_h2d": 49152
+    },
+    "qkv_M4": {
+     "roundtrip_us": {
+      "median": 28.66356517188251,
+      "min": 28.597130440175533,
+      "max": 28.750969795510173,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 13.321395963430405,
+      "min": 13.264230219647288,
+      "max": 13.348619686439633,
+      "n": 5
+     },
+     "bytes_d2h": 65536,
+     "bytes_h2d": 81920
+    },
+    "o_M4": {
+     "roundtrip_us": {
+      "median": 28.539035702124238,
+      "min": 28.481845511123538,
+      "max": 29.067989671602845,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 12.935834238305688,
+      "min": 8.66671558469534,
+      "max": 13.111794833093882,
+      "n": 5
+     },
+     "bytes_d2h": 65536,
+     "bytes_h2d": 65536
+    },
+    "gateup_M4": {
+     "roundtrip_us": {
+      "median": 39.94915052317083,
+      "min": 39.73002079874277,
+      "max": 46.31087533198297,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 7.701560389250516,
+      "min": 7.6128600630909204,
+      "max": 7.859425386413932,
+      "n": 5
+     },
+     "bytes_d2h": 65536,
+     "bytes_h2d": 473088
+    },
+    "down_M4": {
+     "roundtrip_us": {
+      "median": 25.87914001196623,
+      "min": 25.543334195390344,
+      "max": 26.564069557935,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 7.706260075792671,
+      "min": 7.6914404053241014,
+      "max": 7.7932653948664665,
+      "n": 5
+     },
+     "bytes_d2h": 236544,
+     "bytes_h2d": 65536
+    },
+    "qkv_M5": {
+     "roundtrip_us": {
+      "median": 25.379195576533675,
+      "min": 23.20952946320176,
+      "max": 45.29534955509007,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 8.293699938803911,
+      "min": 8.055369835346937,
+      "max": 8.486210135743022,
+      "n": 5
+     },
+     "bytes_d2h": 81920,
+     "bytes_h2d": 102400
+    },
+    "o_M5": {
+     "roundtrip_us": {
+      "median": 21.61932992748916,
+      "min": 19.56757507286966,
+      "max": 27.362314285710454,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 7.515995530411601,
+      "min": 7.407900411635637,
+      "max": 7.7020900789648294,
+      "n": 5
+     },
+     "bytes_d2h": 81920,
+     "bytes_h2d": 81920
+    },
+    "gateup_M5": {
+     "roundtrip_us": {
+      "median": 46.15047015249729,
+      "min": 45.523864682763815,
+      "max": 47.02786449342966,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 7.617400260642171,
+      "min": 7.595494389533997,
+      "max": 7.772404933348298,
+      "n": 5
+     },
+     "bytes_d2h": 81920,
+     "bytes_h2d": 591360
+    },
+    "down_M5": {
+     "roundtrip_us": {
+      "median": 35.313054686412215,
+      "min": 35.25059903040528,
+      "max": 35.47262982465327,
+      "n": 5
+     },
+     "gpu_kernels_only_us": {
+      "median": 12.252010637894273,
+      "min": 12.195975286886096,
+      "max": 12.26879539899528,
+      "n": 5
+     },
+     "bytes_d2h": 295680,
+     "bytes_h2d": 81920
+    }
+   },
+   "oneway": {
+    "10240": {
+     "h2d_us": {
+      "median": 10.834881104528904,
+      "min": 10.752440430223942,
+      "max": 11.855922639369965,
+      "n": 5
+     },
+     "h2d_GBps": 0.9450957422799732,
+     "d2h_us": {
+      "median": 10.222243145108223,
+      "min": 10.182461701333523,
+      "max": 10.304339230060577,
+      "n": 5
+     },
+     "d2h_GBps": 1.0017370800752547
+    },
+    "102400": {
+     "h2d_us": {
+      "median": 12.126676738262177,
+      "min": 12.081442400813103,
+      "max": 12.265658006072044,
+      "n": 5
+     },
+     "h2d_GBps": 8.444193096770428,
+     "d2h_us": {
+      "median": 11.447598226368427,
+      "min": 11.409237049520016,
+      "max": 11.524120345711708,
+      "n": 5
+     },
+     "d2h_GBps": 8.945107783756034
+    },
+    "1048576": {
+     "h2d_us": {
+      "median": 50.49661733210087,
+      "min": 50.021279603242874,
+      "max": 50.63291639089584,
+      "n": 5
+     },
+     "h2d_GBps": 20.76527211919633,
+     "d2h_us": {
+      "median": 47.46898077428341,
+      "min": 47.45692014694214,
+      "max": 47.52323962748051,
+      "n": 5
+     },
+     "d2h_GBps": 22.08970959342932
+    },
+    "16777216": {
+     "h2d_us": {
+      "median": 680.1266968250275,
+      "min": 677.0700588822365,
+      "max": 683.5145782679319,
+      "n": 5
+     },
+     "h2d_GBps": 24.667780397857523,
+     "d2h_us": {
+      "median": 644.7114422917366,
+      "min": 644.6101423352957,
+      "max": 645.7978626713157,
+      "n": 5
+     },
+     "d2h_GBps": 26.022829593907204
+    }
+   }
+  },
+  "split": {
+   "cpu_code_bytes": 17553162240,
+   "omp_threads": "16",
+   "loadavg_start": [
+    52.2158203125,
+    46.857421875,
+    39.22802734375
+   ],
+   "fwd_eager": [
+    {
+     "k": 2,
+     "M": 1,
+     "wall_ms": {
+      "median": 30.583519022911787,
+      "min": 30.563276959583163,
+      "max": 30.586292035877705,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "cpu_calls": 0
+    },
+    {
+     "k": 2,
+     "M": 2,
+     "wall_ms": {
+      "median": 32.501674024388194,
+      "min": 32.49687794595957,
+      "max": 32.54654700867832,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "cpu_calls": 0
+    },
+    {
+     "k": 2,
+     "M": 3,
+     "wall_ms": {
+      "median": 33.5577221121639,
+      "min": 33.5549539886415,
+      "max": 33.603828866034746,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "cpu_calls": 0
+    },
+    {
+     "k": 2,
+     "M": 4,
+     "wall_ms": {
+      "median": 34.47229601442814,
+      "min": 34.46567710489035,
+      "max": 34.51323811896145,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "cpu_calls": 0
+    },
+    {
+     "k": 2,
+     "M": 5,
+     "wall_ms": {
+      "median": 36.11012501642108,
+      "min": 35.96160700544715,
+      "max": 36.23033897019923,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+     },
+     "cpu_calls": 0
+    },
+    {
+     "k": 4,
+     "M": 1,
+     "wall_ms": {
+      "median": 479.4565588235855,
+      "min": 471.277347067371,
+      "max": 484.9378641229123,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 376.52983656153083,
+      "min": 370.30618032440543,
+      "max": 380.33161987550557,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 53.44140320084989,
+      "min": 52.560090785846114,
+      "max": 53.94161678850651,
+      "n": 3
+     },
+     "cpu_calls": 560
+    },
+    {
+     "k": 4,
+     "M": 2,
+     "wall_ms": {
+      "median": 607.7927330043167,
+      "min": 555.8446259237826,
+      "max": 621.0408790502697,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 447.28741119615734,
+      "min": 440.4427430126816,
+      "max": 448.78219277597964,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 85.41405666619539,
+      "min": 63.25301481410861,
+      "max": 91.95321216247976,
+      "n": 3
+     },
+     "cpu_calls": 560
+    },
+    {
+     "k": 4,
+     "M": 3,
+     "wall_ms": {
+      "median": 744.0717839635909,
+      "min": 735.9303741250187,
+      "max": 751.1114438530058,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 590.2775002177805,
+      "min": 583.8986658491194,
+      "max": 598.6252839211375,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 79.40646773204207,
+      "min": 79.21168580651283,
+      "max": 79.92884609848261,
+      "n": 3
+     },
+     "cpu_calls": 560
+    },
+    {
+     "k": 4,
+     "M": 4,
+     "wall_ms": {
+      "median": 836.0413280315697,
+      "min": 815.9261080436409,
+      "max": 838.1301530171186,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 670.7040769979358,
+      "min": 652.3410251829773,
+      "max": 673.165726242587,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 89.05810746364295,
+      "min": 88.6127760168165,
+      "max": 89.19440698809922,
+      "n": 3
+     },
+     "cpu_calls": 560
+    },
+    {
+     "k": 4,
+     "M": 5,
+     "wall_ms": {
+      "median": 1119.0645978786051,
+      "min": 1115.0965311098844,
+      "max": 1123.998814029619,
+      "n": 3
+     },
+     "cpu_kernel_ms": {
+      "median": 933.1804909743369,
+      "min": 929.3083278462291,
+      "max": 935.0487287156284,
+      "n": 3
+     },
+     "host_xfer_ms": {
+      "median": 104.26684748381376,
+      "min": 103.81273832172155,
+      "max": 106.02588066831231,
+      "n": 3
+     },
+     "cpu_calls": 560
+    }
+   ],
+   "fwd_graph_k2": [
+    {
+     "k": 2,
+     "M": 1,
+     "us": {
+      "median": 28989.696502685547,
+      "min": 28946.43211364746,
+      "max": 29009.61685180664,
+      "n": 5
+     }
+    },
+    {
+     "k": 2,
+     "M": 2,
+     "us": {
+      "median": 30695.93620300293,
+      "min": 30625.024795532227,
+      "max": 30731.199264526367,
+      "n": 5
+     }
+    },
+    {
+     "k": 2,
+     "M": 3,
+     "us": {
+      "median": 31795.20034790039,
+      "min": 31780.864715576172,
+      "max": 31866.880416870117,
+      "n": 5
+     }
+    },
+    {
+     "k": 2,
+     "M": 4,
+     "us": {
+      "median": 32775.68054199219,
+      "min": 32727.550506591797,
+      "max": 32825.02365112305,
+      "n": 5
+     }
+    },
+    {
+     "k": 2,
+     "M": 5,
+     "us": {
+      "median": 34079.742431640625,
+      "min": 34035.71319580078,
+      "max": 34089.95056152344,
+      "n": 5
+     }
+    }
+   ],
+   "ar_offloaded_k4": {
+    "n_tokens": 16,
+    "step_ms": {
+     "median": 458.8572005595779,
+     "min": 453.14635781687684,
+     "max": 460.8003324974561,
+     "n": 3
+    },
+    "tokens_per_s": {
+     "median": 2.1793272477374153,
+     "min": 2.170137322992319,
+     "max": 2.206792535678097,
+     "n": 3
+    }
+   },
+   "spec_round": [
+    {
+     "gamma": 1,
+     "round_ms": {
+      "median": 575.815336080268,
+      "min": 570.9768598899245,
+      "max": 600.8792601060122,
+      "n": 3
+     },
+     "draft_ms": {
+      "median": 28.957773000001907,
+      "min": 28.953335946425796,
+      "max": 28.979884926229715,
+      "n": 3
+     },
+     "verify_ms": {
+      "median": 546.8620001338422,
+      "min": 541.9969749636948,
+      "max": 571.9214871060103,
+      "n": 3
+     }
+    },
+    {
+     "gamma": 2,
+     "round_ms": {
+      "median": 804.7343830112368,
+      "min": 787.4515410512686,
+      "max": 812.8921559546143,
+      "n": 3
+     },
+     "draft_ms": {
+      "median": 57.91174713522196,
+      "min": 57.88399511948228,
+      "max": 57.92234605178237,
+      "n": 3
+     },
+     "verify_ms": {
+      "median": 746.8503878917545,
+      "min": 729.5291949994862,
+      "max": 754.9804088193923,
+      "n": 3
+     }
+    },
+    {
+     "gamma": 3,
+     "round_ms": {
+      "median": 946.7953559942544,
+      "min": 884.1806789860129,
+      "max": 947.7328979410231,
+      "n": 3
+     },
+     "draft_ms": {
+      "median": 87.0142187923193,
+      "min": 86.91613003611565,
+      "max": 87.01657201163471,
+      "n": 3
+     },
+     "verify_ms": {
+      "median": 859.8792259581387,
+      "min": 797.1664601936936,
+      "max": 860.7163259293884,
+      "n": 3
+     }
+    },
+    {
+     "gamma": 4,
+     "round_ms": {
+      "median": 1249.6938409749418,
+      "min": 1245.7860969007015,
+      "max": 1261.848398949951,
+      "n": 3
+     },
+     "draft_ms": {
+      "median": 115.89707690291107,
+      "min": 115.85395084694028,
+      "max": 115.95637700520456,
+      "n": 3
+     },
+     "verify_ms": {
+      "median": 1133.8398901280016,
+      "min": 1129.8890199977905,
+      "max": 1145.8920219447464,
+      "n": 3
+     }
+    }
+   ],
+   "loadavg_end": [
+    41.736328125,
+    44.328125,
+    39.10693359375
+   ]
+  },
+  "T_ar_gpu_k2_ms": 29.5206053648144,
+  "T_ar_offloaded_k4_ms": 458.8572005595779,
+  "breakeven": [
+   {
+    "gamma": 1,
+    "round_ms": 575.815336080268,
+    "draft_ms": 28.957773000001907,
+    "verify_ms": 546.8620001338422,
+    "tau_breakeven_vs_offloaded_k4_AR": 1.2548900515848052,
+    "tau_breakeven_vs_gpu_k2_AR": 19.50553957022108,
+    "tau_max": 2
+   },
+   {
+    "gamma": 2,
+    "round_ms": 804.7343830112368,
+    "draft_ms": 57.91174713522196,
+    "verify_ms": 746.8503878917545,
+    "tau_breakeven_vs_offloaded_k4_AR": 1.7537795680875454,
+    "tau_breakeven_vs_gpu_k2_AR": 27.260090810007554,
+    "tau_max": 3
+   },
+   {
+    "gamma": 3,
+    "round_ms": 946.7953559942544,
+    "draft_ms": 87.0142187923193,
+    "verify_ms": 859.8792259581387,
+    "tau_breakeven_vs_offloaded_k4_AR": 2.0633769173495247,
+    "tau_breakeven_vs_gpu_k2_AR": 32.072355708624436,
+    "tau_max": 4
+   },
+   {
+    "gamma": 4,
+    "round_ms": 1249.6938409749418,
+    "draft_ms": 115.89707690291107,
+    "verify_ms": 1133.8398901280016,
+    "tau_breakeven_vs_offloaded_k4_AR": 2.7234918389663187,
+    "tau_breakeven_vs_gpu_k2_AR": 42.33293408218693,
+    "tau_max": 5
+   }
+  ]
+ },
+ "notes": ""
+}

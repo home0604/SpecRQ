@@ -46,6 +46,9 @@ class AQEngine(nn.Module):
 
     def _reference_weight(self) -> torch.Tensor:
         """Weight the codes approximate: W (default) or W R^T when the Hadamard rotation is enabled."""
+        if self.rotated_weight is not None and self.rotated_weight.device != self.XTX.device:
+            # [specrq] multi-GPU replica: rotated_weight is a plain attribute (not replicated); move it once
+            self.rotated_weight = self.rotated_weight.to(self.XTX.device)
         return self.layer.weight.detach() if self.rotated_weight is None else self.rotated_weight
 
     @torch.no_grad()
@@ -181,9 +184,11 @@ class AQEngine(nn.Module):
         total_codebooks = self.quantized_weight.num_codebooks
         
         # EXAMPLE - 35W 
-        codebook_weights = torch.tensor(self.codebook_weights, device=self.device, dtype=self.XTX.dtype)
+        # [specrq] multi-GPU: replicas keep self.device of the master; compute on the replica's own device (XTX's)
+        dev = self.XTX.device
+        codebook_weights = torch.tensor(self.codebook_weights, device=dev, dtype=self.XTX.dtype)
 
-        total_loss = torch.tensor(0.0, device=self.device, dtype=self.XTX.dtype)
+        total_loss = torch.tensor(0.0, device=dev, dtype=self.XTX.dtype)
 
         # Inspired by Matryoshka Representation Learning
         for i in range(1, total_codebooks + 1):
@@ -196,8 +201,8 @@ class AQEngine(nn.Module):
             mse_i = (delta_weight @ self.XTX).flatten() @ delta_weight.flatten() / self.quantized_weight.out_features
             
             # Ensure all tensors are on the same device before computation
-            mse_i = mse_i.to(self.device)
-            codebook_weight = codebook_weights[i-1].to(self.device)
+            mse_i = mse_i.to(dev)
+            codebook_weight = codebook_weights[i-1].to(dev)
             
             #total_loss = total_loss + mse_i
             total_loss = total_loss + codebook_weight* mse_i 

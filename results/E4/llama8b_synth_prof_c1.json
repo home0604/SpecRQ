@@ -1,0 +1,520 @@
+{
+ "exp": "E4",
+ "run": "llama8b_synth_prof_c1",
+ "time": "2026-11-16T22:20:22",
+ "commit": "8e27289",
+ "dirty_files": 19,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "setting": "SYNTHETIC (all random weights) C1 nested-VQ d8 K256 model, batch 1 M=1 decode step, CUDA graph (ARDecoder step), nsys --cuda-graph-trace=node; each profiled step = graph replay + device sync",
+  "model_shapes": "/data/models/llama3.1_8b_instruct",
+  "P": 512,
+  "pre": 128,
+  "steps": 20,
+  "vd": 32768,
+  "cuda_visible_devices": "6",
+  "co_tenants_start": "none",
+  "co_tenants_end": "none",
+  "notes": "wall_step_us = pipelined graph replays without sync (median of 3 x steps) measured in the same process before the profiled replays; rotation of q/k/v, gate/up and down inputs is fused into add_rms_rot / act_rot and cannot be separated; only the o_proj input FWHT is a separate kernel",
+  "scripts": [
+   "experiments/22_scale72/prof_synth.py",
+   "experiments/22_scale72/prof_analyze.py"
+  ]
+ },
+ "metrics": {
+  "configs": {
+   "k1": {
+    "k": 1,
+    "vd": null,
+    "ctx": 639,
+    "n_layers": 32,
+    "wall_step_us": 4116.517398506403,
+    "gpu_span_us": 4228.884,
+    "kernel_sum_us": 4105.2665,
+    "table": {
+     "VQ linears (sum)": {
+      "us": 2032.6064999999999,
+      "pct_of_wall": 49.37684705857167
+     },
+     "q/k/v bias add (Qwen2)": {
+      "us": 0,
+      "pct_of_wall": 0.0
+     },
+     "rotation: separate FWHT (o_proj input)": {
+      "us": 44.845,
+      "pct_of_wall": 1.089391727489628
+     },
+     "fused residual+RMSNorm+FWHT (2/layer)": {
+      "us": 206.43500000000006,
+      "pct_of_wall": 5.014797218515363
+     },
+     "fused SiLU*mul+FWHT": {
+      "us": 56.444,
+      "pct_of_wall": 1.3711590292434959
+     },
+     "RoPE": {
+      "us": 56.446,
+      "pct_of_wall": 1.3712076140011047
+     },
+     "KV cache write": {
+      "us": 110.47700000000003,
+      "pct_of_wall": 2.6837491331892442
+     },
+     "attention (fp32, compiled)": {
+      "us": 463.55499999999995,
+      "pct_of_wall": 11.260853656738867
+     },
+     "step setup (pos/mask/RoPE tables)": {
+      "us": 10.8165,
+      "pct_of_wall": 0.26275851533931455
+     },
+     "embedding": {
+      "us": 1.5194999999999999,
+      "pct_of_wall": 0.0369122695934996
+     },
+     "final norm": {
+      "us": 2.1595,
+      "pct_of_wall": 0.05245939202840566
+     },
+     "lm_head": {
+      "us": 1096.722,
+      "pct_of_wall": 26.641986267273495
+     },
+     "argmax": {
+      "us": 20.7665,
+      "pct_of_wall": 0.5044676844444946
+     },
+     "FR-Spec id map": {
+      "us": 0,
+      "pct_of_wall": 0.0
+     },
+     "bookkeeping (out/tok/pos)": {
+      "us": 3.2,
+      "pct_of_wall": 0.07773561217453026
+     },
+     "other kernels": {
+      "us": 0,
+      "pct_of_wall": 0.0
+     },
+     "memcpy nodes": {
+      "us": 0.832,
+      "pct_of_wall": 0.02021125916537787
+     },
+     "idle: wall - kernel sum (unprofiled wall)": {
+      "us": 11.250898506403246,
+      "pct_of_wall": 0.27331108840898893
+     },
+     "[profiled] idle gaps inside traced step": {
+      "us": 123.61750000000029,
+      "pct_of_wall": 3.002963136870318
+     }
+    },
+    "vq_by_linear": {
+     "q": {
+      "us": 197.45850000000002,
+      "pct_of_wall": 4.796736680176402,
+      "bytes": 67502080,
+      "GBps": 341.8545162654431
+     },
+     "k": {
+      "us": 117.50900000000001,
+      "pct_of_wall": 2.8545731409427746,
+      "bytes": 16973824,
+      "GBps": 144.44701256925
+     },
+     "v": {
+      "us": 120.52199999999999,
+      "pct_of_wall": 2.9277660782808548,
+      "bytes": 16973824,
+      "GBps": 140.83589718059775
+     },
+     "o": {
+      "us": 199.85700000000003,
+      "pct_of_wall": 4.855001950739093,
+      "bytes": 67502080,
+      "GBps": 337.75189260321133
+     },
+     "gate": {
+      "us": 455.5510000000001,
+      "pct_of_wall": 11.066417456787327,
+      "bytes": 235929600,
+      "GBps": 517.8994228966679
+     },
+     "up": {
+      "us": 458.2085,
+      "pct_of_wall": 11.130974453460391,
+      "bytes": 235929600,
+      "GBps": 514.8957297824026
+     },
+     "down": {
+      "us": 483.5005,
+      "pct_of_wall": 11.745377298184835,
+      "bytes": 235274240,
+      "GBps": 486.6059911003195
+     }
+    },
+    "vq_GBps": 431.01566781371605,
+    "vq_bytes": 876085248,
+    "lm_head_GBps": 958.0122875259183,
+    "fixed_us": 2083.910898506403,
+    "fixed_pct": 50.62315294142833,
+    "n_steps": 20,
+    "span_range": [
+     4207.829,
+     4366.41
+    ]
+   },
+   "k1v": {
+    "k": 1,
+    "vd": 32768,
+    "ctx": 639,
+    "n_layers": 32,
+    "wall_step_us": 3284.894593525678,
+    "gpu_span_us": 3373.392,
+    "kernel_sum_us": 3273.2905,
+    "table": {
+     "VQ linears (sum)": {
+      "us": 2028.4795,
+      "pct_of_wall": 61.75173790958183
+     },
+     "q/k/v bias add (Qwen2)": {
+      "us": 0,
+      "pct_of_wall": 0.0
+     },
+     "rotation: separate FWHT (o_proj input)": {
+      "us": 44.8605,
+      "pct_of_wall": 1.3656602585792934
+     },
+     "fused residual+RMSNorm+FWHT (2/layer)": {
+      "us": 205.60300000000007,
+      "pct_of_wall": 6.259044062029592
+     },
+     "fused SiLU*mul+FWHT": {
+      "us": 56.4435,
+      "pct_of_wall": 1.7182743127053945
+     },
+     "RoPE": {
+      "us": 56.06299999999999,
+      "pct_of_wall": 1.7066909882130363
+     },
+     "KV cache write": {
+      "us": 110.16749999999999,
+      "pct_of_wall": 3.353760580845828
+     },
+     "attention (fp32, compiled)": {
+      "us": 463.77699999999993,
+      "pct_of_wall": 14.118474331385713
+     },
+     "step setup (pos/mask/RoPE tables)": {
+      "us": 10.847,
+      "pct_of_wall": 0.33020846456926684
+     },
+     "embedding": {
+      "us": 1.536,
+      "pct_of_wall": 0.04675949124904525
+     },
+     "final norm": {
+      "us": 2.144,
+      "pct_of_wall": 0.06526845653512567
+     },
+     "lm_head": {
+      "us": 281.7235,
+      "pct_of_wall": 8.576333029232032
+     },
+     "argmax": {
+      "us": 7.343,
+      "pct_of_wall": 0.22353837515738234
+     },
+     "FR-Spec id map": {
+      "us": 1.632,
+      "pct_of_wall": 0.049681959452110576
+     },
+     "bookkeeping (out/tok/pos)": {
+      "us": 3.2315,
+      "pct_of_wall": 0.09837454164797509
+     },
+     "other kernels": {
+      "us": 0,
+      "pct_of_wall": 0.0
+     },
+     "memcpy nodes": {
+      "us": 0.832,
+      "pct_of_wall": 0.025328057759899512
+     },
+     "idle: wall - kernel sum (unprofiled wall)": {
+      "us": 11.604093525677854,
+      "pct_of_wall": 0.35325619118947676
+     },
+     "[profiled] idle gaps inside traced step": {
+      "us": 100.10149999999976,
+      "pct_of_wall": 3.0473276128035756
+     }
+    },
+    "vq_by_linear": {
+     "q": {
+      "us": 197.55450000000002,
+      "pct_of_wall": 6.01402858981739,
+      "bytes": 67502080,
+      "GBps": 341.6883948480039
+     },
+     "k": {
+      "us": 118.11800000000001,
+      "pct_of_wall": 3.595792700100734,
+      "bytes": 16973824,
+      "GBps": 143.70226383785706
+     },
+     "v": {
+      "us": 119.43100000000001,
+      "pct_of_wall": 3.6357635412530755,
+      "bytes": 16973824,
+      "GBps": 142.12243052473812
+     },
+     "o": {
+      "us": 199.00999999999996,
+      "pct_of_wall": 6.058337469708655,
+      "bytes": 67502080,
+      "GBps": 339.18938746796647
+     },
+     "gate": {
+      "us": 455.4715000000001,
+      "pct_of_wall": 13.865635168254896,
+      "bytes": 235929600,
+      "GBps": 517.9898193410563
+     },
+     "up": {
+      "us": 457.15250000000003,
+      "pct_of_wall": 13.916808804185651,
+      "bytes": 235929600,
+      "GBps": 516.0851138296301
+     },
+     "down": {
+      "us": 481.74199999999996,
+      "pct_of_wall": 14.66537163626143,
+      "bytes": 235274240,
+      "GBps": 488.3822460985341
+     }
+    },
+    "vq_GBps": 431.8925816110047,
+    "vq_bytes": 876085248,
+    "lm_head_GBps": 952.8330295484757,
+    "fixed_us": 1256.415093525678,
+    "fixed_pct": 38.24826209041817,
+    "n_steps": 20,
+    "span_range": [
+     3365.649,
+     3395.279
+    ]
+   },
+   "k2": {
+    "k": 2,
+    "vd": null,
+    "ctx": 639,
+    "n_layers": 32,
+    "wall_step_us": 5058.107653167099,
+    "gpu_span_us": 5127.876,
+    "kernel_sum_us": 5039.8535,
+    "table": {
+     "VQ linears (sum)": {
+      "us": 2964.5925,
+      "pct_of_wall": 58.610703909074395
+     },
+     "q/k/v bias add (Qwen2)": {
+      "us": 0,
+      "pct_of_wall": 0.0
+     },
+     "rotation: separate FWHT (o_proj input)": {
+      "us": 46.558000000000014,
+      "pct_of_wall": 0.9204628132192489
+     },
+     "fused residual+RMSNorm+FWHT (2/layer)": {
+      "us": 206.99000000000007,
+      "pct_of_wall": 4.092241885567515
+     },
+     "fused SiLU*mul+FWHT": {
+      "us": 56.78200000000001,
+      "pct_of_wall": 1.1225937424334247
+     },
+     "RoPE": {
+      "us": 56.28449999999998,
+      "pct_of_wall": 1.1127580482546242
+     },
+     "KV cache write": {
+      "us": 111.22650000000004,
+      "pct_of_wall": 2.1989745499061564
+     },
+     "attention (fp32, compiled)": {
+      "us": 463.3605,
+      "pct_of_wall": 9.160748085499328
+     },
+     "step setup (pos/mask/RoPE tables)": {
+      "us": 10.863,
+      "pct_of_wall": 0.21476411229006184
+     },
+     "embedding": {
+      "us": 1.536,
+      "pct_of_wall": 0.030367087957059283
+     },
+     "final norm": {
+      "us": 2.144,
+      "pct_of_wall": 0.042387393606728586
+     },
+     "lm_head": {
+      "us": 1097.426,
+      "pct_of_wall": 21.69637491429931
+     },
+     "argmax": {
+      "us": 20.686999999999998,
+      "pct_of_wall": 0.4089869456820868
+     },
+     "FR-Spec id map": {
+      "us": 0,
+      "pct_of_wall": 0.0
+     },
+     "bookkeeping (out/tok/pos)": {
+      "us": 3.2,
+      "pct_of_wall": 0.06326476657720684
+     },
+     "other kernels": {
+      "us": 0,
+      "pct_of_wall": 0.0
+     },
+     "memcpy nodes": {
+      "us": 0.8634999999999999,
+      "pct_of_wall": 0.017071601856068156
+     },
+     "idle: wall - kernel sum (unprofiled wall)": {
+      "us": 18.254153167098593,
+      "pct_of_wall": 0.36088898099408545
+     },
+     "[profiled] idle gaps inside traced step": {
+      "us": 88.02250000000004,
+      "pct_of_wall": 1.7402259112631848
+     }
+    },
+    "vq_by_linear": {
+     "q": {
+      "us": 273.9335,
+      "pct_of_wall": 5.415730917242903,
+      "bytes": 134742016,
+      "GBps": 491.87856176772834
+     },
+     "k": {
+      "us": 136.9335,
+      "pct_of_wall": 2.707208098156235,
+      "bytes": 33882112,
+      "GBps": 247.4347913403221
+     },
+     "v": {
+      "us": 136.805,
+      "pct_of_wall": 2.7046676223733694,
+      "bytes": 33882112,
+      "GBps": 247.6672051460108
+     },
+     "o": {
+      "us": 273.24699999999996,
+      "pct_of_wall": 5.402158647788136,
+      "bytes": 134742016,
+      "GBps": 493.11434709255735
+     },
+     "gate": {
+      "us": 687.5529999999999,
+      "pct_of_wall": 13.593087517018215,
+      "bytes": 470941696,
+      "GBps": 684.9532996001765
+     },
+     "up": {
+      "us": 698.1740000000001,
+      "pct_of_wall": 13.803067231335879,
+      "bytes": 470941696,
+      "GBps": 674.533420035693
+     },
+     "down": {
+      "us": 757.9465000000001,
+      "pct_of_wall": 14.984783875159659,
+      "bytes": 470286336,
+      "GBps": 620.4743157993341
+     }
+    },
+    "vq_GBps": 590.1040308237979,
+    "vq_bytes": 1749417984,
+    "lm_head_GBps": 957.3977215775825,
+    "fixed_us": 2093.5151531670986,
+    "fixed_pct": 41.3892960909256,
+    "n_steps": 20,
+    "span_range": [
+     5118.901,
+     5140.371
+    ]
+   }
+  },
+  "meta": {
+   "model": "/data/models/llama3.1_8b_instruct",
+   "P": 512,
+   "pre": 128,
+   "steps": 20,
+   "vd": 32768,
+   "co_tenants_start": "none",
+   "cuda_visible_devices": "6",
+   "n_layers": 32,
+   "linear_bytes": {
+    "k1": 876085248,
+    "k2": 1749417984
+   },
+   "lm_head_bytes": 1050673152,
+   "vd_bytes": 268435456,
+   "gpu_mem_alloc_gib": 5.029186725616455,
+   "cfg": {
+    "k1": {
+     "k": 1,
+     "vd": null,
+     "wall_step_us_runs": [
+      4117.136751301587,
+      4116.517398506403,
+      4115.988046396524
+     ],
+     "wall_step_us": 4116.517398506403,
+     "ar_generate_step_us": 4115.6433225704695,
+     "ctx": 639
+    },
+    "k1v": {
+     "k": 1,
+     "vd": 32768,
+     "wall_step_us_runs": [
+      3284.894593525678,
+      3284.6339512616396,
+      3285.130101721734
+     ],
+     "wall_step_us": 3284.894593525678,
+     "ar_generate_step_us": 3285.5266774821234,
+     "ctx": 639
+    },
+    "k2": {
+     "k": 2,
+     "vd": null,
+     "wall_step_us_runs": [
+      5058.107653167099,
+      5059.724696911871,
+      5055.920442100614
+     ],
+     "wall_step_us": 5058.107653167099,
+     "ar_generate_step_us": 5057.756897194062,
+     "ctx": 639
+    }
+   },
+   "co_tenants_end": "none"
+  }
+ },
+ "notes": ""
+}
