@@ -3,7 +3,7 @@ random nested-VQ linears + Hadamard signs B=256; timing only, no quality).
 
 Per configuration (d, per-plane bits, L, q):
   target AR step (k = L, full vocab) at P=128; draft step for every prefix k < L with the FR-Spec draft vocab
-  (V_d = 32k); target forward cost at M in {1, 2, 3, 5, 8} (verify uses M = gamma+1); draft catch-up (M=2) per k;
+  (V_d = 32k); target forward cost at M in {1, 2, 3, 4, 5, 8} (verify uses M = gamma+1); draft catch-up (M=2) per k;
   kernel launch plans per linear shape and k (smem bytes, smem vs global fallback, replication R, blocks/SM).
 Protocol as v5 (l1_llama31_synthetic_cost_v5_frspec): CUDA graphs, deterministic split-K, 3 repeats, median.
 Spec rounds are measured only for --measure-spec configs (C1 baseline, model validation); for every configuration
@@ -32,6 +32,9 @@ CONFIGS = {  # name -> (d, per-plane bits)
     "C1": (8, [8] * 5), "d16K256L10": (16, [8] * 10), "d8K16L10": (8, [4] * 10),
     "d8K4096L5": (8, [12] * 5), "d8K4096L3": (8, [12] * 3), "d16K4096L6": (16, [12] * 6),
     "d16K4096L7": (16, [12] * 7), "BF": (8, [12, 12, 8, 8]), "BL": (8, [8, 8, 12, 12]),
+    # E4 cachefit: 2.0 bit/weight index targets
+    "d8K256L2": (8, [8, 8]), "d16K256L4": (16, [8] * 4), "d8K16L4": (8, [4] * 4), "d8K4096K16": (8, [12, 4]),
+    "d16K4096x2K256": (16, [12, 12, 8]), "d16K65536L2": (16, [16, 16]),
 }
 SHAPES = {"q": (4096, 4096), "k": (1024, 4096), "o": (4096, 4096), "gate": (14336, 4096), "down": (4096, 14336)}
 
@@ -77,7 +80,7 @@ def run_config(model_path, name, q, a, specialized=False):
     m.prefill(prompt, cache, L)
     pos = torch.tensor(P, device="cuda")
     toks = torch.randint(0, V, (16,), device="cuda", generator=gen)
-    for M in (1, 2, 3, 5, 8):
+    for M in (1, 2, 3, 4, 5, 8):
         res["fwd"][M] = graph_us(lambda: m.forward(toks[:M], pos, cache, L, last_only=(M == 1)))
     for k in range(1, L):
         res["catchup"][k] = graph_us(lambda: m.forward(toks[:2], pos, cache, k, last_only=True, vd=vd))
@@ -138,6 +141,7 @@ def main(argv=None):
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--ovh-ms", type=float, default=None)
     ap.add_argument("--tag", required=True)
+    ap.add_argument("--run-prefix", default=None, help="result name prefix (default l1_llama31_config_sweep_<tag>)")
     ap.add_argument("--no-save", action="store_true", help="functional smoke run (no JSON, co-tenant allowed)")
     a = ap.parse_args(argv)
     from specrq.nestkern.gpucheck import cotenants, require_alone
@@ -157,7 +161,7 @@ def main(argv=None):
                                      "composed_round_ms": next(x["round_ms"] for x in res["model"]
                                                                if x["gamma"] == r["gamma"] and x["kd"] == r["kd"])}
                                     for r in res["spec"]]
-        run = f"l1_llama31_config_sweep_{a.tag}_{name}_q{q}" + ("_specialized" if spec else "")
+        run = f"{a.run_prefix or 'l1_llama31_config_sweep_' + a.tag}_{name}_q{q}" + ("_specialized" if spec else "")
         if a.no_save:
             print("[smoke] model rows", len(res["model"]), "plans", list(res["plans"]), "ar", res["ar"], flush=True)
             continue
