@@ -1,0 +1,9 @@
+d32K256L8_T_FT_n192:8:8:mix_int8x4-nf3x4:int8,int8,int8,int8,nf3,nf3,nf3,nf3
+d32K256L8_T_FT_n192:8:8:mix_nf3x4-int8x4:nf3,nf3,nf3,nf3,int8,int8,int8,int8
+d8K256L2_T_FT_n192:2:2:int4:int4
+d8K256L2_T_FT_n192:2:2:nf4:nf4
+d8K256L2_T_FT_n192:2:2:nf3:nf3
+d8K256L2_T_FT_n192:2:2:mix_int8-int4:int8,int4
+d8K256L2_T_FT_n192:2:2:mix_int4-int8:int4,int8
+d8K256L2_T_FT_n192:2:2:mix_bf16-nf4:bf16,nf4
+d8K256L2_T_FT_n192:2:2:mix_nf4-bf16:nf4,bf16

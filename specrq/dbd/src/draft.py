@@ -206,11 +206,31 @@ class STEFakeQuant:
         return cb + (q.to(cb.dtype) - cb).detach()
 
 
-def attach_fakequant(model: nn.Module, fmt: str, gran: str) -> int:
+class STEFakeQuantStages:
+    """[specrq] per-stage formats (same convention as quantize_draft.py --fmt_stages): stage j of the draft codebooks
+    [k, K, og, ig] is fake-quantized with its own format and one scale per codebook (codebook gran only)."""
+
+    def __init__(self, fmts, gran: str = "codebook"):
+        assert gran == "codebook", "per-stage formats use one scale per codebook"
+        self.stages = [STEFakeQuant(f, gran) for f in fmts]
+
+    def refresh(self, cb: torch.Tensor):
+        assert cb.shape[0] == len(self.stages), (cb.shape, len(self.stages))
+        for j, t in enumerate(self.stages):
+            t.refresh(cb[j:j + 1])
+
+    def __call__(self, cb: torch.Tensor) -> torch.Tensor:
+        assert cb.shape[0] == len(self.stages), (cb.shape, len(self.stages))
+        return torch.cat([t(cb[j:j + 1]) for j, t in enumerate(self.stages)], 0)
+
+
+def attach_fakequant(model: nn.Module, fmt, gran: str) -> int:
+    """fmt: one format name (all stages), or a list of per-stage format names ([specrq] STEFakeQuantStages)."""
     n = 0
     for m in model.modules():
         if isinstance(m, QuantizedLinear) and getattr(m, "draft_codebooks", None) is not None:
-            m.draft_codebook_transform = STEFakeQuant(fmt, gran)
+            m.draft_codebook_transform = (STEFakeQuant(fmt, gran) if isinstance(fmt, str)
+                                          else STEFakeQuantStages(fmt, gran))
             n += 1
     return n
 
