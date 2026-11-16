@@ -157,16 +157,21 @@ class GenVQ:
 
     def __init__(self, codes, codebooks, scales, b, d, q, smem_max=SMEM_MAX_DEFAULT):
         """codes [L, N, K/d] (plane l values < 2^bits[l]); codebooks: float [L, 2^b, d] or a list of per-plane
-        [2^bits[l], d]; b: int or per-plane list (8/12 may be mixed)."""
-        from specrq.nestkern.pack import pack_general, quantize_codebook_list
+        [2^bits[l], d]; b: int or per-plane list (any 4/8/12 mix, or uniform 16); q: int or per-plane list of
+        codebook precisions 16/8/4 (mixed patterns must be instantiated in csrc/nestg.cu DISPATCH_DBQ)."""
+        from specrq.nestkern.pack import kernel_q, pack_general, quantize_codebook_list
         self.L, self.N, G = codes.shape
         self.bits = [b] * self.L if isinstance(b, int) else list(b)
-        self.K, self.d, self.q, self.smem_max = G * d, d, q, smem_max
+        self.qs = [q] * self.L if isinstance(q, int) else list(q)
+        self.K, self.d, self.smem_max = G * d, d, smem_max
+        self.q = kernel_q(self.qs)  # kernel Q template value (uniform q, or negative per-plane pattern)
         self.planes = pack_general(codes, self.bits, d)
         self.b = self.planes["B"]
         cbl = [codebooks[l] for l in range(self.L)] if torch.is_tensor(codebooks) else list(codebooks)
-        self.cb, self.cbs, self.cb_deq, self.cb_off = quantize_codebook_list([c.float() for c in cbl], q)
+        self.cb, self.cbs, self.cb_deq, self.cb_off = quantize_codebook_list([c.float() for c in cbl], self.qs)
         self.nib = torch.tensor(self.planes["nib"], dtype=torch.long)
+        self.byt = torch.tensor(self.planes["byt"], dtype=torch.long)
+        self.qv = torch.tensor(self.qs, dtype=torch.long)
         self.scales = scales.to(torch.bfloat16).contiguous()
         self.dev = codes.device
 
@@ -176,7 +181,7 @@ class GenVQ:
                 self.scales]
 
     def _meta(self):
-        return [self.cb_off, self.nib]
+        return [self.cb_off, self.nib, self.byt, self.qv]
 
     def gemv(self, x, k, dry_run=False):
         y, plan = ext_g().nestg_gemv(x.contiguous(), *self._args("gemv"), *self._meta(), self.N, self.d, self.b, self.q,

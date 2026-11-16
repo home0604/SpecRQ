@@ -137,13 +137,31 @@ def split_planes(c: torch.Tensor, b: int):
 
 def kernel_bits(bits) -> int:
     """nestg B template for per-plane bit widths: uniform b -> b; a mix of 8 and 12 -> 12 (8-bit planes have no
-    nibble sub-plane)."""
+    nibble sub-plane); any other mix of 4/8/12 -> 0 ("mix4812": per-plane byte and/or nibble sub-planes)."""
     s = set(bits)
     if len(s) == 1:
         return bits[0]
     if s == {8, 12}:
         return 12
+    if s <= {4, 8, 12}:
+        return 0
     raise ValueError(f"unsupported per-plane bit mix {bits}")
+
+
+_QDIG = {16: 1, 8: 2, 4: 3}
+
+
+def kernel_q(qs) -> int:
+    """nestg Q template for per-plane codebook precision: uniform q -> q; otherwise a negative decimal pattern with
+    digit l (least significant = plane 0) in {1: bf16, 2: int8, 3: int4}, e.g. (16, 8) -> -21. Trailing planes that
+    repeat the last pattern digit are dropped (the kernel repeats the last digit)."""
+    qs = list(qs)
+    if len(set(qs)) == 1:
+        return qs[0]
+    while len(qs) > 1 and qs[-1] == qs[-2]:
+        qs.pop()
+    assert len(qs) <= 9, qs
+    return -sum(_QDIG[q] * 10 ** l for l, q in enumerate(qs))
 
 
 def pack_general(codes: torch.Tensor, bits, d: int) -> dict:
@@ -154,10 +172,16 @@ def pack_general(codes: torch.Tensor, bits, d: int) -> dict:
     bits = [bits] * L if isinstance(bits, int) else list(bits)
     B = kernel_bits(bits)
     nib = [i for i, b in enumerate(bits) if b in (4, 12)]
-    out = {"nib": [nib.index(l) if l in nib else -1 for l in range(L)], "B": B, "bits": bits}
+    # byte sub-planes: all planes for B >= 8 (as before); B = 0 stacks only the 8/12-bit planes
+    byt = [l for l in range(L) if bits[l] in (8, 12)] if B == 0 else (list(range(L)) if B >= 8 else [])
+    out = {"nib": [nib.index(l) if l in nib else -1 for l in range(L)], "B": B, "bits": bits,
+           "byt": [byt.index(l) if l in byt else -1 for l in range(L)]}
     for path, ordered in (("gemv", codes[..., lane_perm(G).to(codes.device)]), ("mma", _mma_order(codes, d))):
         flat = ordered.reshape(L, -1).to(torch.int64)
-        p0 = (flat & 0xFF).to(torch.uint8).contiguous() if B >= 8 else None
+        if B == 0:
+            p0 = (flat[byt] & 0xFF).to(torch.uint8).contiguous()
+        else:
+            p0 = (flat & 0xFF).to(torch.uint8).contiguous() if B >= 8 else None
         pn = None
         if nib:
             nv = torch.stack([((flat[l] >> 8) & 0xF) if bits[l] == 12 else (flat[l] & 0xF) for l in nib])
@@ -167,12 +191,14 @@ def pack_general(codes: torch.Tensor, bits, d: int) -> dict:
     return out
 
 
-def quantize_codebook_list(cbs, q: int):
+def quantize_codebook_list(cbs, q):
     """List of per-plane float codebooks [C_l, d] (C_l may differ) -> (bytes uint8 [sum], scales fp32 [L],
-    dequantized list, byte offsets long [L+1] on CPU)."""
+    dequantized list, byte offsets long [L+1] on CPU). q: int or per-plane list (16/8/4)."""
+    qs = [q] * len(cbs) if isinstance(q, int) else list(q)
+    assert len(qs) == len(cbs), (qs, len(cbs))
     raws, scs, deqs, off = [], [], [], [0]
-    for cb in cbs:
-        r, s, dq = quantize_codebooks(cb[None], q)
+    for cb, ql in zip(cbs, qs):
+        r, s, dq = quantize_codebooks(cb[None], ql)
         raws.append(r)
         scs.append(s)
         deqs.append(dq[0])

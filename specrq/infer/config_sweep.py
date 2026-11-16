@@ -10,7 +10,8 @@ Spec rounds are measured only for --measure-spec configs (C1 baseline, model val
 the round time is COMPOSED from measured parts: R(g, k) = g * t_draft(k) + t_fwd(M = g+1) + t_ovh, with t_ovh the
 median overhead of the measured C1 rounds (or --ovh-ms). tau*, alpha*, and the tau = g+1 upper bound follow as in
 llama_cost; they are [I] computed values, tau is an assumed variable.
-Usage: python -m specrq.infer.config_sweep --configs C1 ... --qs 16 8 4 --tag NAME
+Per-plane codebook precision: --qpats 16,8 16,4 (one comma list per run, length L; run name suffix q16-8).
+Usage: python -m specrq.infer.config_sweep --configs C1 ... --qs 16 8 4 [--qpats 16,8 ...] --tag NAME
 """
 from __future__ import annotations
 
@@ -35,6 +36,8 @@ CONFIGS = {  # name -> (d, per-plane bits)
     # E4 cachefit: 2.0 bit/weight index targets
     "d8K256L2": (8, [8, 8]), "d16K256L4": (16, [8] * 4), "d8K16L4": (8, [4] * 4), "d8K4096K16": (8, [12, 4]),
     "d16K4096x2K256": (16, [12, 12, 8]), "d16K65536L2": (16, [16, 16]),
+    # E4 cachefit2: per-plane 4/8/12 mixes (nestg B = 0); per-plane codebook q via --qpats
+    "d8K16K4096": (8, [4, 12]), "d8K256K16x2": (8, [8, 4, 4]),
 }
 SHAPES = {"q": (4096, 4096), "k": (1024, 4096), "o": (4096, 4096), "gate": (14336, 4096), "down": (4096, 14336)}
 
@@ -131,7 +134,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="/data/models/llama3.1_8b_instruct")
     ap.add_argument("--configs", nargs="+", default=list(CONFIGS))
-    ap.add_argument("--qs", type=int, nargs="+", default=[16, 8, 4])
+    ap.add_argument("--qs", type=int, nargs="*", default=[16, 8, 4])
+    ap.add_argument("--qpats", nargs="*", default=[], help="per-plane codebook q lists, e.g. 16,8 (len = L)")
     ap.add_argument("--specialized-c1", action="store_true", help="also run C1 on the specialized kernels")
     ap.add_argument("--measure-spec", action="store_true")
     ap.add_argument("--gammas", type=int, nargs="+", default=[1, 2, 4, 7])
@@ -148,7 +152,8 @@ def main(argv=None):
     cotenant_start = (cotenants() or "none") if a.no_save else require_alone()
     sys.path.insert(0, str(REPO))
     from tools.results import save_result
-    runs = ([("C1", 16, True)] if a.specialized_c1 else []) + [(c, q, False) for c in a.configs for q in a.qs]
+    qpats = [[int(v) for v in p.split(",")] for p in a.qpats]
+    runs = ([("C1", 16, True)] if a.specialized_c1 else []) + [(c, q, False) for c in a.configs for q in a.qs + qpats]
     for name, q, spec in runs:
         cfg_start = cotenants() or "none"
         res = run_config(a.model, name, q, a, spec)
@@ -161,7 +166,8 @@ def main(argv=None):
                                      "composed_round_ms": next(x["round_ms"] for x in res["model"]
                                                                if x["gamma"] == r["gamma"] and x["kd"] == r["kd"])}
                                     for r in res["spec"]]
-        run = f"{a.run_prefix or 'l1_llama31_config_sweep_' + a.tag}_{name}_q{q}" + ("_specialized" if spec else "")
+        qn = "-".join(map(str, q)) if isinstance(q, list) else q
+        run = f"{a.run_prefix or 'l1_llama31_config_sweep_' + a.tag}_{name}_q{qn}" + ("_specialized" if spec else "")
         if a.no_save:
             print("[smoke] model rows", len(res["model"]), "plans", list(res["plans"]), "ar", res["ar"], flush=True)
             continue

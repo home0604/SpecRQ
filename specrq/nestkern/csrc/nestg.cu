@@ -20,6 +20,16 @@
 // Codebooks: [L][2^b][d] in q format, plane bytes PB = 2^b * d * q/8. Copied to shared memory when k*PB <= smem_max
 // (else read from global/L2: "fallback"). Dequant: k codeword values summed in fp32; mma rounds the sum once to bf16
 // (as nest_mma), GEMV keeps fp32 (as nest_gemv).
+//
+// cachefit2 extensions (both opt-in; every pre-existing (d, B, Q) instantiation keeps its code path):
+//  * B = 0 ("mix4812"): any per-plane mix of 4/8/12-bit codes. Plane l has a byte sub-plane iff PInfo.byt[l] >= 0
+//    (index into the stacked byte sub-planes) and a nibble sub-plane iff PInfo.nib[l] >= 0; the nibble supplies
+//    bits 8..11 when the plane also has a byte (12-bit) and bits 0..3 otherwise (4-bit).
+//  * per-plane codebook precision: template Q < 0 encodes a compile-time pattern, decimal digit l (least significant
+//    = plane 0) in {1: bf16, 2: int8, 3: int4}; planes past the last digit repeat it (QP = -21 -> (16, 8, 8, ...));
+//    pack.kernel_q emits the canonical (shortest) pattern.
+//    Entry size E_l = d * q_l / 8 per plane; PInfo.loge[l] = log2(E_l) drives the smem replication copy. Patterns are
+//    instantiated explicitly in DISPATCH_DBQ (one line per (d, B, pattern)).
 #include <torch/extension.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -35,10 +45,27 @@ constexpr int MAXL = 10;
 struct PInfo {
   long long cb_off[MAXL + 1];
   int nib[MAXL];
+  int byt[MAXL];   // B = 0 only: byte sub-plane index of plane l (-1: none)
+  int loge[MAXL];  // log2 of plane l's codeword bytes (used by the replicated smem copy of mixed-q patterns)
   int R;  // shared-memory replication of each codeword (lane % R picks the copy); 1 for the global fallback
 };
 
-template <int D, int Q> struct Ent { static constexpr int E = D * Q / 8; };
+// codebook precision of plane l under template Q (Q > 0: uniform; Q < 0: per-plane digit pattern, see header)
+__host__ __device__ constexpr int qdig(int n, int l) { return (l == 0 || n < 10) ? n % 10 : qdig(n / 10, l - 1); }
+__host__ __device__ constexpr int qof(int Q, int l) {
+  return Q > 0 ? Q : (qdig(-Q, l) == 1 ? 16 : qdig(-Q, l) == 2 ? 8 : 4);
+}
+template <int D, int Q> struct Ent { static constexpr int E = Q > 0 ? D * Q / 8 : 0; };  // 0: per plane
+
+// compile-time loop (plane index must be a constant expression for per-plane Q)
+template <int I, int N> struct SFor {
+  template <typename F> __device__ __forceinline__ static void run(F&& f) {
+    if constexpr (I < N) {
+      f(std::integral_constant<int, I>{});
+      SFor<I + 1, N>::run(f);
+    }
+  }
+};
 
 __device__ __forceinline__ float bf_lo(uint32_t w) { return __uint_as_float(w << 16); }
 __device__ __forceinline__ float bf_hi(uint32_t w) { return __uint_as_float(w & 0xffff0000u); }
@@ -89,8 +116,9 @@ __device__ __forceinline__ void add_entry(float* w, const uint8_t* p, float sc) 
 }
 
 template <int B>
-__device__ __forceinline__ uint32_t code_of(uint32_t c0, uint32_t cn, uint32_t c1, int j) {
-  if constexpr (B == 4) return (cn >> (4 * j)) & 0xfu;
+__device__ __forceinline__ uint32_t code_of(uint32_t c0, uint32_t cn, uint32_t c1, int j, int nsh = 8) {
+  if constexpr (B == 0) return ((c0 >> (8 * j)) & 0xffu) | (((cn >> (4 * j)) & 0xfu) << nsh);  // c0 = 0 w/o byte
+  else if constexpr (B == 4) return (cn >> (4 * j)) & 0xfu;
   else if constexpr (B == 8) return (c0 >> (8 * j)) & 0xffu;
   else if constexpr (B == 12) return ((c0 >> (8 * j)) & 0xffu) | (((cn >> (4 * j)) & 0xfu) << 8);
   else return ((c0 >> (8 * j)) & 0xffu) | (((c1 >> (8 * j)) & 0xffu) << 8);
@@ -106,16 +134,29 @@ __device__ __forceinline__ void copy_cb(uint8_t* sh, const uint8_t* cb, const PI
     uint4* d = reinterpret_cast<uint4*>(sh);
     for (int i = threadIdx.x; i < bytes / 16; i += blockDim.x) d[i] = s[i];
   } else {
-    constexpr int LOG_E = E == 4 ? 2 : E == 8 ? 3 : E == 16 ? 4 : 5;
     const uint32_t* s = reinterpret_cast<const uint32_t*>(cb);
-    for (int w = threadIdx.x; w < bytes / 4; w += blockDim.x) {
-      const int off = w * 4;
-      int l = 0;
-      while (l + 1 < k && off >= (int)pi.cb_off[l + 1]) l++;
-      const int loc = off - (int)pi.cb_off[l], ent = loc >> LOG_E, within = loc & (E - 1);
-      const uint32_t v = s[w];
-      uint8_t* dst = sh + (int)pi.cb_off[l] * pi.R + within;
-      for (int r = 0; r < pi.R; r++) *reinterpret_cast<uint32_t*>(dst + ((ent * pi.R + r) << LOG_E)) = v;
+    if constexpr (E > 0) {
+      constexpr int LOG_E = E == 4 ? 2 : E == 8 ? 3 : E == 16 ? 4 : 5;
+      for (int w = threadIdx.x; w < bytes / 4; w += blockDim.x) {
+        const int off = w * 4;
+        int l = 0;
+        while (l + 1 < k && off >= (int)pi.cb_off[l + 1]) l++;
+        const int loc = off - (int)pi.cb_off[l], ent = loc >> LOG_E, within = loc & (E - 1);
+        const uint32_t v = s[w];
+        uint8_t* dst = sh + (int)pi.cb_off[l] * pi.R + within;
+        for (int r = 0; r < pi.R; r++) *reinterpret_cast<uint32_t*>(dst + ((ent * pi.R + r) << LOG_E)) = v;
+      }
+    } else {  // mixed per-plane precision: entry size per plane
+      for (int w = threadIdx.x; w < bytes / 4; w += blockDim.x) {
+        const int off = w * 4;
+        int l = 0;
+        while (l + 1 < k && off >= (int)pi.cb_off[l + 1]) l++;
+        const int le = pi.loge[l];
+        const int loc = off - (int)pi.cb_off[l], ent = loc >> le, within = loc & ((1 << le) - 1);
+        const uint32_t v = s[w];
+        uint8_t* dst = sh + (int)pi.cb_off[l] * pi.R + within;
+        for (int r = 0; r < pi.R; r++) *reinterpret_cast<uint32_t*>(dst + ((ent * pi.R + r) << le)) = v;
+      }
     }
   }
   __syncthreads();
@@ -133,11 +174,12 @@ __global__ void __launch_bounds__(256) nestg_gemv_kernel(
   if (use_smem) copy_cb<E>(shm, cb, pi, k);
   const uint8_t* cbase = use_smem ? shm : cb;
   float sc[LM];
-  int po[LM];  // plane byte offsets (replicated layout in smem), 32-bit
+  int po[LM], nsh[LM];  // plane byte offsets (replicated layout in smem), 32-bit; nibble shift (B = 0)
 #pragma unroll
   for (int l = 0; l < LM; l++) {
     sc[l] = (Q < 16 && l < k) ? cbs[l] : 1.f;
     po[l] = (int)pi.cb_off[l] * (use_smem ? pi.R : 1);
+    nsh[l] = (B == 0 && pi.byt[l] < 0) ? 0 : 8;  // B = 0: nibble is the low 4 bits of a 4-bit plane
   }
   const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, nw = blockDim.x >> 5;
   const int R = use_smem ? pi.R : 1, rr = lane % R;
@@ -157,6 +199,10 @@ __global__ void __launch_bounds__(256) nestg_gemv_kernel(
           if constexpr (B == 4 || B == 12)
             if (pi.nib[l] >= 0) an[l] = __ldg(pn + pi.nib[l] * pl + (long long)row * nch + ch_);
           if constexpr (B == 16) a1[l] = __ldg(p1 + o);
+          if constexpr (B == 0) {
+            if (pi.byt[l] >= 0) a0[l] = __ldg(p0 + pi.byt[l] * pl + (long long)row * nch + ch_);
+            if (pi.nib[l] >= 0) an[l] = __ldg(pn + pi.nib[l] * pl + (long long)row * nch + ch_);
+          }
         }
       }
     };
@@ -169,10 +215,18 @@ __global__ void __launch_bounds__(256) nestg_gemv_kernel(
         float w[D];
 #pragma unroll
         for (int e = 0; e < D; e++) w[e] = 0.f;
+        if constexpr (Q > 0) {
 #pragma unroll
-        for (int l = 0; l < LM; l++)
-          if (l < k)
-            add_entry<D, Q>(w, cbase + po[l] + ((int)code_of<B>(c0[l], cn[l], c1[l], g) * R + rr) * E, sc[l]);
+          for (int l = 0; l < LM; l++)
+            if (l < k)
+              add_entry<D, Q>(w, cbase + po[l] + ((int)code_of<B>(c0[l], cn[l], c1[l], g, nsh[l]) * R + rr) * E, sc[l]);
+        } else {
+          SFor<0, LM>::run([&](auto lc) {
+            constexpr int l = decltype(lc)::value, QL = qof(Q, l), EL = D * QL / 8;
+            if (l < k)
+              add_entry<D, QL>(w, cbase + po[l] + ((int)code_of<B>(c0[l], cn[l], c1[l], g, nsh[l]) * R + rr) * EL, sc[l]);
+          });
+        }
         const int gi = 128 * blk + g * wd + jj;
 #pragma unroll
         for (int i = 0; i < D / 8; i++) {
@@ -207,11 +261,12 @@ __global__ void __launch_bounds__(256) nestg_gemv_xreg_kernel(
   if (use_smem) copy_cb<E>(shm, cb, pi, k);
   const uint8_t* cbase = use_smem ? shm : cb;
   float sc[LM];
-  int po[LM];
+  int po[LM], nsh[LM];
 #pragma unroll
   for (int l = 0; l < LM; l++) {
     sc[l] = (Q < 16 && l < k) ? cbs[l] : 1.f;
     po[l] = (int)pi.cb_off[l] * (use_smem ? pi.R : 1);
+    nsh[l] = (B == 0 && pi.byt[l] < 0) ? 0 : 8;  // B = 0: nibble is the low 4 bits of a 4-bit plane
   }
   const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, nw = blockDim.x >> 5;
   const int R = use_smem ? pi.R : 1, rr = lane % R;
@@ -243,6 +298,10 @@ __global__ void __launch_bounds__(256) nestg_gemv_xreg_kernel(
           if constexpr (B == 4 || B == 12)
             if (pi.nib[l] >= 0) an[u][l] = __ldg(pn + pi.nib[l] * pl + o);
           if constexpr (B == 16) a1[u][l] = __ldg(p1 + l * pl + o);
+          if constexpr (B == 0) {
+            if (pi.byt[l] >= 0) a0[u][l] = __ldg(p0 + pi.byt[l] * pl + o);
+            if (pi.nib[l] >= 0) an[u][l] = __ldg(pn + pi.nib[l] * pl + o);
+          }
         }
       }
   };
@@ -263,10 +322,20 @@ __global__ void __launch_bounds__(256) nestg_gemv_xreg_kernel(
         float w[D];
 #pragma unroll
         for (int e = 0; e < D; e++) w[e] = 0.f;
+        if constexpr (Q > 0) {
 #pragma unroll
-        for (int l = 0; l < LM; l++)
-          if (l < k)
-            add_entry<D, Q>(w, cbase + po[l] + ((int)code_of<B>(c0[u][l], cn[u][l], c1[u][l], g) * R + rr) * E, sc[l]);
+          for (int l = 0; l < LM; l++)
+            if (l < k)
+              add_entry<D, Q>(w, cbase + po[l] + ((int)code_of<B>(c0[u][l], cn[u][l], c1[u][l], g, nsh[l]) * R + rr) * E,
+                              sc[l]);
+        } else {
+          SFor<0, LM>::run([&](auto lc) {
+            constexpr int l = decltype(lc)::value, QL = qof(Q, l), EL = D * QL / 8;
+            if (l < k)
+              add_entry<D, QL>(w, cbase + po[l] + ((int)code_of<B>(c0[u][l], cn[u][l], c1[u][l], g, nsh[l]) * R + rr) * EL,
+                               sc[l]);
+          });
+        }
 #pragma unroll
         for (int i = 0; i < D / 8; i++) {
           const uint32_t uu[4] = {xr[u][g][i].x, xr[u][g][i].y, xr[u][g][i].z, xr[u][g][i].w};
@@ -307,8 +376,20 @@ __device__ __forceinline__ uint32_t comp4(const uint4& v, int s) { return s == 0
 template <int D, int B>
 __device__ __forceinline__ void load_codes_mma(const uint8_t* __restrict__ p0, const uint8_t* __restrict__ pn,
                                                const uint8_t* __restrict__ p1, long long idx, long long plane_lanes,
-                                               int l, int nl, uint32_t& c0, uint32_t& cn, uint32_t& c1) {
-  // idx = (tile * nsup + ks) * 32 + lane; per-lane element = n codes; nl = nibble sub-plane index (-1: none)
+                                               int l, int nl, uint32_t& c0, uint32_t& cn, uint32_t& c1, int bl = -1) {
+  // idx = (tile * nsup + ks) * 32 + lane; per-lane element = n codes; nl = nibble sub-plane index (-1: none);
+  // bl = byte sub-plane index (B = 0 only, -1: none)
+  if constexpr (B == 0) {
+    const long long ob = (long long)bl * plane_lanes + idx, on = (long long)nl * plane_lanes + idx;
+    if constexpr (D == 8) {
+      if (bl >= 0) c0 = __ldg(reinterpret_cast<const uint32_t*>(p0) + ob);
+      if (nl >= 0) cn = __ldg(reinterpret_cast<const uint16_t*>(pn) + on);
+    } else {
+      if (bl >= 0) c0 = __ldg(reinterpret_cast<const uint16_t*>(p0) + ob);
+      if (nl >= 0) cn = __ldg(pn + on);
+    }
+    return;
+  }
   const long long o = l * plane_lanes + idx, on = (long long)nl * plane_lanes + idx;
   if constexpr (D == 8) {
     if constexpr (B >= 8) c0 = __ldg(reinterpret_cast<const uint32_t*>(p0) + o);
@@ -334,11 +415,12 @@ __global__ void __launch_bounds__(WARPS * 32) nestg_mma_kernel(
   if (use_smem) copy_cb<E>(shm, cb, pi, k);
   const uint8_t* cbase = use_smem ? shm : cb;
   float sc[LM];
-  int po[LM];
+  int po[LM], nsh[LM];
 #pragma unroll
   for (int l = 0; l < LM; l++) {
     sc[l] = (Q < 16 && l < k) ? cbs[l] : 1.f;
     po[l] = (int)pi.cb_off[l] * (use_smem ? pi.R : 1);
+    nsh[l] = (B == 0 && pi.byt[l] < 0) ? 0 : 8;  // B = 0: nibble is the low 4 bits of a 4-bit plane
   }
 
   const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, g = lane >> 2, t = lane & 3;
@@ -360,7 +442,7 @@ __global__ void __launch_bounds__(WARPS * 32) nestg_mma_kernel(
         a0[i][l] = an[i][l] = a1[i][l] = 0u;
         if (l < k && tv[i] && ks_ < ks1)
           load_codes_mma<D, B>(p0, pn, p1, ((long long)(tile0 + i) * nsup + ks_) * 32 + lane, plane_lanes, l,
-                               pi.nib[l], a0[i][l], an[i][l], a1[i][l]);
+                               pi.nib[l], a0[i][l], an[i][l], a1[i][l], pi.byt[l]);
       }
   };
   load(ks0, c0, cn, c1);
@@ -387,20 +469,40 @@ __global__ void __launch_bounds__(WARPS * 32) nestg_mma_kernel(
         float w[16];
 #pragma unroll
         for (int e = 0; e < 16; e++) w[e] = 0.f;
+        if constexpr (Q > 0) {
 #pragma unroll
-        for (int l = 0; l < LM; l++) {
-          if (l < k) {
-            const uint8_t* pb = cbase + po[l];
-            if constexpr (D == 8) {
+          for (int l = 0; l < LM; l++) {
+            if (l < k) {
+              const uint8_t* pb = cbase + po[l];
+              if constexpr (D == 8) {
 #pragma unroll
-              for (int gp = 0; gp < 2; gp++)
-                add_entry<8, Q>(w + 8 * gp,
-                                pb + ((int)code_of<B>(c0[i][l], cn[i][l], c1[i][l], rh * 2 + gp) * R + rr) * E,
-                                sc[l]);
-            } else {
-              add_entry<16, Q>(w, pb + ((int)code_of<B>(c0[i][l], cn[i][l], c1[i][l], rh) * R + rr) * E, sc[l]);
+                for (int gp = 0; gp < 2; gp++)
+                  add_entry<8, Q>(w + 8 * gp,
+                                  pb + ((int)code_of<B>(c0[i][l], cn[i][l], c1[i][l], rh * 2 + gp, nsh[l]) * R + rr) * E,
+                                  sc[l]);
+              } else {
+                add_entry<16, Q>(w, pb + ((int)code_of<B>(c0[i][l], cn[i][l], c1[i][l], rh, nsh[l]) * R + rr) * E,
+                                 sc[l]);
+              }
             }
           }
+        } else {
+          SFor<0, LM>::run([&](auto lc) {
+            constexpr int l = decltype(lc)::value, QL = qof(Q, l), EL = D * QL / 8;
+            if (l < k) {
+              const uint8_t* pb = cbase + po[l];
+              if constexpr (D == 8) {
+#pragma unroll
+                for (int gp = 0; gp < 2; gp++)
+                  add_entry<8, QL>(w + 8 * gp,
+                                   pb + ((int)code_of<B>(c0[i][l], cn[i][l], c1[i][l], rh * 2 + gp, nsh[l]) * R + rr) * EL,
+                                   sc[l]);
+              } else {
+                add_entry<16, QL>(w, pb + ((int)code_of<B>(c0[i][l], cn[i][l], c1[i][l], rh, nsh[l]) * R + rr) * EL,
+                                  sc[l]);
+              }
+            }
+          });
         }
 #pragma unroll
         for (int e = 0; e < 8; e++) W[rh][e] = pack_bf(w[2 * e], w[2 * e + 1]);
@@ -500,8 +602,8 @@ Plan gemv_launch(const torch::Tensor& x, const torch::Tensor& p0, const torch::T
   if (y) {
     kern<<<p.grid_x, 256, p.smem_launch, at::cuda::getCurrentCUDAStream()>>>(
         reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()),
-        B >= 8 ? reinterpret_cast<const uint32_t*>(p0.data_ptr()) : nullptr,
-        (B == 4 || B == 12) ? reinterpret_cast<const uint16_t*>(pn.data_ptr()) : nullptr,
+        (B >= 8 || B == 0) ? reinterpret_cast<const uint32_t*>(p0.data_ptr()) : nullptr,
+        (B == 4 || B == 12 || B == 0) ? reinterpret_cast<const uint16_t*>(pn.data_ptr()) : nullptr,
         B == 16 ? reinterpret_cast<const uint32_t*>(p1.data_ptr()) : nullptr,
         reinterpret_cast<const uint8_t*>(cb.data_ptr()), Q < 16 ? cbs.data_ptr<float>() : nullptr,
         reinterpret_cast<const __nv_bfloat16*>(sc.data_ptr()), reinterpret_cast<__nv_bfloat16*>(y->data_ptr()), N, K, k,
@@ -530,8 +632,9 @@ Plan mma_launch(const torch::Tensor& x, const torch::Tensor& p0, const torch::Te
     torch::Tensor wsd;
     if (splits > 1) wsd = torch::empty({(long)splits * M * N}, x.options().dtype(torch::kFloat32));
     kern<<<dim3(nbN, splits), WARPS * 32, p.smem_launch, at::cuda::getCurrentCUDAStream()>>>(
-        reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), B >= 8 ? reinterpret_cast<const uint8_t*>(p0.data_ptr()) : nullptr,
-        (B == 4 || B == 12) ? reinterpret_cast<const uint8_t*>(pn.data_ptr()) : nullptr,
+        reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()),
+        (B >= 8 || B == 0) ? reinterpret_cast<const uint8_t*>(p0.data_ptr()) : nullptr,
+        (B == 4 || B == 12 || B == 0) ? reinterpret_cast<const uint8_t*>(pn.data_ptr()) : nullptr,
         B == 16 ? reinterpret_cast<const uint8_t*>(p1.data_ptr()) : nullptr, reinterpret_cast<const uint8_t*>(cb.data_ptr()),
         Q < 16 ? cbs.data_ptr<float>() : nullptr, reinterpret_cast<const __nv_bfloat16*>(sc.data_ptr()),
         reinterpret_cast<__nv_bfloat16*>(y->data_ptr()), splits > 1 ? wsd.data_ptr<float>() : nullptr,
@@ -567,6 +670,22 @@ Plan mma_launch(const torch::Tensor& x, const torch::Tensor& p0, const torch::Te
     if (D_ == 16 && B_ == 16 && Q_ == 16) { constexpr int D = 16, B = 16, Q = 16; return __VA_ARGS__(); } \
     if (D_ == 16 && B_ == 16 && Q_ == 8) { constexpr int D = 16, B = 16, Q = 8; return __VA_ARGS__(); } \
     if (D_ == 16 && B_ == 16 && Q_ == 4) { constexpr int D = 16, B = 16, Q = 4; return __VA_ARGS__(); } \
+    /* cachefit2: B = 0 (per-plane 4/8/12 mix) with uniform q */                                 \
+    if (D_ == 8 && B_ == 0 && Q_ == 16) { constexpr int D = 8, B = 0, Q = 16; return __VA_ARGS__(); }   \
+    if (D_ == 8 && B_ == 0 && Q_ == 8) { constexpr int D = 8, B = 0, Q = 8; return __VA_ARGS__(); }     \
+    if (D_ == 8 && B_ == 0 && Q_ == 4) { constexpr int D = 8, B = 0, Q = 4; return __VA_ARGS__(); }     \
+    if (D_ == 16 && B_ == 0 && Q_ == 16) { constexpr int D = 16, B = 0, Q = 16; return __VA_ARGS__(); } \
+    if (D_ == 16 && B_ == 0 && Q_ == 8) { constexpr int D = 16, B = 0, Q = 8; return __VA_ARGS__(); }   \
+    if (D_ == 16 && B_ == 0 && Q_ == 4) { constexpr int D = 16, B = 0, Q = 4; return __VA_ARGS__(); }   \
+    /* cachefit2: per-plane q patterns (digits plane0 = least significant; 1 bf16, 2 int8, 3 int4) */ \
+    if (D_ == 8 && B_ == 8 && Q_ == -21) { constexpr int D = 8, B = 8, Q = -21; return __VA_ARGS__(); } /* A d8 [8,8] (16,8) */ \
+    if (D_ == 8 && B_ == 8 && Q_ == -31) { constexpr int D = 8, B = 8, Q = -31; return __VA_ARGS__(); } /* A (16,4) */ \
+    if (D_ == 8 && B_ == 0 && Q_ == -21) { constexpr int D = 8, B = 0, Q = -21; return __VA_ARGS__(); } /* B d8 [4,12] (16,8); F d8 [8,4,4] (16,8,8) */ \
+    if (D_ == 8 && B_ == 0 && Q_ == -31) { constexpr int D = 8, B = 0, Q = -31; return __VA_ARGS__(); } /* B (16,4) */ \
+    if (D_ == 8 && B_ == 0 && Q_ == -12) { constexpr int D = 8, B = 0, Q = -12; return __VA_ARGS__(); } /* C d8 [12,4] (8,16) */ \
+    if (D_ == 16 && B_ == 12 && Q_ == -132) { constexpr int D = 16, B = 12, Q = -132; return __VA_ARGS__(); } /* D d16 [12,12,8] (8,4,16) */ \
+    if (D_ == 16 && B_ == 12 && Q_ == -31) { constexpr int D = 16, B = 12, Q = -31; return __VA_ARGS__(); } /* D (16,4,4) */ \
+    if (D_ == 16 && B_ == 8 && Q_ == -311) { constexpr int D = 16, B = 8, Q = -311; return __VA_ARGS__(); } /* E d16 [8]*4 (16,16,4,4) */ \
     TORCH_CHECK(false, "unsupported (d, b, q) = (", D_, ", ", B_, ", ", Q_, ")");                 \
     return Plan{};                                                                                 \
   }()
@@ -574,19 +693,30 @@ Plan mma_launch(const torch::Tensor& x, const torch::Tensor& p0, const torch::Te
 void check_common(const torch::Tensor& x, int d, int b, int q, int k, int L) {
   TORCH_CHECK(x.scalar_type() == at::kBFloat16 && x.is_contiguous() && x.dim() == 2, "x bf16 [M, K] contiguous");
   TORCH_CHECK(d == 8 || d == 16, "d must be 8 or 16");
-  TORCH_CHECK(b == 4 || b == 8 || b == 12 || b == 16, "b must be 4/8/12/16");
-  TORCH_CHECK(q == 16 || q == 8 || q == 4, "q must be 16/8/4");
+  TORCH_CHECK(b == 0 || b == 4 || b == 8 || b == 12 || b == 16, "b must be 0 (4/8/12 mix)/4/8/12/16");
+  TORCH_CHECK(q == 16 || q == 8 || q == 4 || q < 0, "q must be 16/8/4 or a per-plane pattern (< 0)");
   TORCH_CHECK(k >= 1 && k <= L && L <= MAXL, "need 1 <= k <= L <= 10");
 }
 
-PInfo make_pinfo(const torch::Tensor& cb_off, const torch::Tensor& nib, int L) {
+// byt: byte sub-plane index per plane (B = 0); qv: codebook precision per plane (16/8/4) -> loge
+PInfo make_pinfo(const torch::Tensor& cb_off, const torch::Tensor& nib, const torch::Tensor& byt, const torch::Tensor& qv,
+                 int L, int d) {
   TORCH_CHECK(cb_off.device().is_cpu() && cb_off.scalar_type() == at::kLong && cb_off.numel() == L + 1, "cb_off cpu long [L+1]");
   TORCH_CHECK(nib.device().is_cpu() && nib.scalar_type() == at::kLong && nib.numel() == L, "nib cpu long [L]");
+  TORCH_CHECK(byt.device().is_cpu() && byt.scalar_type() == at::kLong && byt.numel() == L, "byt cpu long [L]");
+  TORCH_CHECK(qv.device().is_cpu() && qv.scalar_type() == at::kLong && qv.numel() == L, "qv cpu long [L]");
   PInfo pi{};
   auto co = cb_off.accessor<int64_t, 1>();
   auto nb = nib.accessor<int64_t, 1>();
+  auto bt = byt.accessor<int64_t, 1>();
+  auto qa = qv.accessor<int64_t, 1>();
   for (int l = 0; l <= MAXL; l++) pi.cb_off[l] = l <= L ? co[l] : co[L];
-  for (int l = 0; l < MAXL; l++) pi.nib[l] = l < L ? (int)nb[l] : -1;
+  for (int l = 0; l < MAXL; l++) {
+    pi.nib[l] = l < L ? (int)nb[l] : -1;
+    pi.byt[l] = l < L ? (int)bt[l] : -1;
+    const int e = d * (int)(l < L ? qa[l] : qa[L - 1]) / 8;
+    pi.loge[l] = e == 4 ? 2 : e == 8 ? 3 : e == 16 ? 4 : 5;
+  }
   return pi;
 }
 
@@ -606,7 +736,7 @@ std::vector<int64_t> plan_vec(const Plan& p) {
 // scales bf16 [N]. dry_run: return the launch plan only.
 std::vector<torch::Tensor> nestg_gemv(torch::Tensor x, torch::Tensor p0, torch::Tensor pn, torch::Tensor p1,
                                       torch::Tensor cb, torch::Tensor cbs, torch::Tensor scales, torch::Tensor cb_off,
-                                      torch::Tensor nib, int64_t N, int64_t d, int64_t b, int64_t q, int64_t L, int64_t k,
+                                      torch::Tensor nib, torch::Tensor byt, torch::Tensor qv, int64_t N, int64_t d, int64_t b, int64_t q, int64_t L, int64_t k,
                                       int64_t smem_max, bool dry_run) {
   const at::cuda::OptionalCUDAGuard guard(device_of(x));
   check_common(x, d, b, q, k, L);
@@ -614,7 +744,7 @@ std::vector<torch::Tensor> nestg_gemv(torch::Tensor x, torch::Tensor p0, torch::
   TORCH_CHECK(x.size(0) == 1, "nestg_gemv is the M=1 path");
   TORCH_CHECK(K % (4 * d) == 0, "K must be a multiple of 4d");
   torch::Tensor y = dry_run ? torch::Tensor() : torch::empty({1, N}, x.options());
-  const PInfo pi = make_pinfo(cb_off, nib, L);
+  const PInfo pi = make_pinfo(cb_off, nib, byt, qv, L, d);
   Plan p = DISPATCH_DBQ(d, b, q, [&] {
     torch::Tensor* yp = dry_run ? nullptr : &y;
     if (k <= 1) G_(1);
@@ -629,7 +759,8 @@ std::vector<torch::Tensor> nestg_gemv(torch::Tensor x, torch::Tensor p0, torch::
 
 std::vector<torch::Tensor> nestg_mma(torch::Tensor x, torch::Tensor p0, torch::Tensor pn, torch::Tensor p1,
                                      torch::Tensor cb, torch::Tensor cbs, torch::Tensor scales, torch::Tensor counters,
-                                     torch::Tensor cb_off, torch::Tensor nib, int64_t N, int64_t d, int64_t b, int64_t q,
+                                     torch::Tensor cb_off, torch::Tensor nib, torch::Tensor byt, torch::Tensor qv,
+                                     int64_t N, int64_t d, int64_t b, int64_t q,
                                      int64_t L, int64_t k, int64_t smem_max, int64_t splits, bool dry_run) {
   const at::cuda::OptionalCUDAGuard guard(device_of(x));
   check_common(x, d, b, q, k, L);
@@ -637,7 +768,7 @@ std::vector<torch::Tensor> nestg_mma(torch::Tensor x, torch::Tensor p0, torch::T
   TORCH_CHECK(M >= 1 && M <= 16, "M <= 16");
   TORCH_CHECK(K % 64 == 0 && N % 16 == 0, "K % 64 == 0 and N % 16 == 0");
   torch::Tensor y = dry_run ? torch::Tensor() : torch::empty({M, N}, x.options());
-  const PInfo pi = make_pinfo(cb_off, nib, L);
+  const PInfo pi = make_pinfo(cb_off, nib, byt, qv, L, d);
   Plan p = DISPATCH_DBQ(d, b, q, [&] {
     torch::Tensor* yp = dry_run ? nullptr : &y;
     if (M <= 8) BY_K(1)
