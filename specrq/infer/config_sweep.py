@@ -52,7 +52,9 @@ def run_config(model_path, name, q, a, specialized=False):
         m = NestModel.synthetic(model_path, vq={"d": d, "bits": bits, "L": L, "q": q}, verbose=False)
     from specrq.infer.frspec import coverage, default_freq_dir, load_subset
     fd = default_freq_dir(m.cfg)
-    ids = load_subset(fd, a.vd, m.lm_head.shape[0])
+    # Qwen2 table is from Qwen2.5-0.5B (vocab pad 151936; same tokenizer as 32B, pad 152064): skip the size check
+    # as experiments/14_q32b_upper does; Llama keeps the exact-size assert
+    ids = load_subset(fd, a.vd, None if m.cfg.model_type == "qwen2" else m.lm_head.shape[0])
     vd = m.set_draft_vocab(ids)
     torch.cuda.synchronize()
     res = {"name": name, "d": d, "bits": bits, "L": L, "q": q, "specialized_c1": specialized,
@@ -115,6 +117,17 @@ def run_config(model_path, name, q, a, specialized=False):
     return res
 
 
+def model_label(path):
+    """Model name in the saved setting string (Llama text unchanged; Qwen2 gets qkv bias / lm_head tying noted)."""
+    if "llama3.1_8b" in path:
+        return "Llama-3.1-8B"
+    from transformers import AutoConfig
+    c = AutoConfig.from_pretrained(path)
+    return (f"{Path(path).name} ({c.model_type}, vocab {c.vocab_size}"
+            + (", random qkv bias" if c.model_type == "qwen2" or getattr(c, "attention_bias", False) else "")
+            + (", tied lm_head" if getattr(c, "tie_word_embeddings", False) else ", untied lm_head") + ")")
+
+
 def compose(res, gammas, ovh_ms):
     T_ar = res["ar"][res["L"]]["step_us"] / 1e3
     out = []
@@ -172,7 +185,7 @@ def main(argv=None):
             print("[smoke] model rows", len(res["model"]), "plans", list(res["plans"]), "ar", res["ar"], flush=True)
             continue
         print("saved", save_result("E4", run, config={"co_tenant_start": cfg_start, "co_tenant_sweep_start": cotenant_start, "co_tenant_end": cotenants() or "none",
-            "setting": "SYNTHETIC Llama-3.1-8B: real embed/norm/lm_head, random nested-VQ linears + Hadamard signs "
+            "setting": f"SYNTHETIC {model_label(a.model)}: real embed/norm/lm_head, random nested-VQ linears + Hadamard signs "
                        "(B=256); timing only, no quality", "config": name, "d": res["d"], "bits": res["bits"],
             "q": q, "specialized_c1_kernels": spec, "P": a.P, "n_new": a.n_new, "repeats": a.repeats, "vd": a.vd,
             "gammas": a.gammas, "deterministic_splitk": True, "smem_max": GenLinear.SMEM_MAX,
