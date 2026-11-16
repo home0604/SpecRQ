@@ -34,7 +34,8 @@ import torch  # noqa: E402
 
 from specrq.infer.llama_cost import req_alpha, rss_gb  # noqa: E402
 from specrq.infer.model import GenLinear  # noqa: E402
-from specrq.kvq.kernels import (KVCache, attn_workspace, dense_append, inv_freq_llama, split_plan,  # noqa: E402
+from specrq.kvq.kernels import (FORMATS, KVCache, attn_workspace, dense_append, inv_freq_llama, lut_ok,  # noqa: E402
+                                split_plan,
                                 vq_attention, vq_dequant_weight, vq_encode)
 from specrq.nestkern.gpucheck import cotenants  # noqa: E402
 from specrq.nestkern.ops import act_rot, add_rms_rot, block_fwht_signed  # noqa: E402
@@ -42,6 +43,7 @@ from specrq.nestkern.ops import act_rot, add_rms_rot, block_fwht_signed  # noqa:
 NL, HID, H, HKV, D, INTER, VOCAB = 32, 4096, 32, 8, 128, 14336, 128256
 G = H // HKV
 EPS = 1e-5
+VD = 32768
 SHAPES = {"qkv": ((H + 2 * HKV) * D, HID), "o": (HID, H * D), "gu": (2 * INTER, HID), "down": (HID, INTER)}
 
 
@@ -95,6 +97,8 @@ class Model:
         bf = torch.bfloat16
         self.embed = torch.randn(VOCAB, HID, device="cuda", generator=gen, dtype=bf) * 0.02
         self.lm_head = torch.randn(VOCAB, HID, device="cuda", generator=gen, dtype=bf) * 0.02
+        # FR-Spec draft vocabulary (V_d = 32768 rows; synthetic: a separate random slice, same cost as a gathered one)
+        self.lm_head_d = torch.randn(VD, HID, device="cuda", generator=gen, dtype=bf) * 0.02
         self.norm = torch.ones(HID, device="cuda", dtype=bf)
         self.scratch = torch.empty(max(n * k for n, k in SHAPES.values()), device="cuda", dtype=bf)
         self.layers = []
@@ -118,14 +122,14 @@ class Step:
     """One decode step of B sequences x M rows. kv: KVCache; kw: weight planes; kst: KV stages read; senc: stages
     encoded for the new rows. Buffers are static (graph-capturable)."""
 
-    def __init__(self, m: Model, kv: KVCache, B, ctx, M, kw, kst, senc, splits, chunk, backend="mma"):
-        self.backend = backend
+    def __init__(self, m: Model, kv: KVCache, B, ctx, M, kw, kst, senc, splits, chunk, backend="mma", vd=False):
+        self.backend, self.vd = backend, vd
         self.m, self.kv, self.B, self.ctx, self.M, self.kw, self.kst, self.senc = m, kv, B, ctx, M, kw, kst, senc
         self.R = R = B * M
         self.splits, self.chunk = splits, chunk
         gen = m.gen
         self.tokens = torch.randint(0, VOCAB, (R,), device="cuda", generator=gen)
-        self.ws = attn_workspace(B, HKV, G, M, splits * 4)
+        self.ws = attn_workspace(B, HKV, G, M, splits * 16)
         self.attn_out = torch.empty(R, H * D, device="cuda", dtype=torch.bfloat16)
         # dummy inputs for the component graphs
         self.qkv_d = torch.randn(R, SHAPES["qkv"][0], device="cuda", generator=gen).to(torch.bfloat16)
@@ -162,7 +166,7 @@ class Step:
                 h, xs = add_rms_rot(h, dn, nx["in_norm"], nx["s_qkv"], 256, EPS)
             else:
                 h, x = add_rms_rot(h, dn, m.norm, None, 128, EPS)
-        return torch.argmax(torch.nn.functional.linear(x, m.lm_head), -1)
+        return torch.argmax(torch.nn.functional.linear(x, m.lm_head_d if self.vd else m.lm_head), -1)
 
     def weights(self):
         m, R, kw = self.m, self.R, self.kw
@@ -189,7 +193,7 @@ class Step:
             act_rot(self.gu_d[:, :INTER], self.gu_d[:, INTER:], lay["down"].gl.signs, 256)
             h, x = add_rms_rot(h, self.x_d, m.norm, None, 128, EPS) if li + 1 == NL else \
                 add_rms_rot(h, self.x_d, m.layers[li + 1]["in_norm"], m.layers[li + 1]["s_qkv"], 256, EPS)
-        return torch.argmax(torch.nn.functional.linear(x, m.lm_head), -1)
+        return torch.argmax(torch.nn.functional.linear(x, m.lm_head_d if self.vd else m.lm_head), -1)
 
 
 def choose_paths(m: Model, Rs, kws, iters, reps, log):
@@ -214,13 +218,21 @@ def choose_paths(m: Model, Rs, kws, iters, reps, log):
     return out
 
 
+def attn_backends(kv):
+    if kv.mode != "vq":
+        return ("triton",)
+    return ("lut", "mmaw", "mma", "cuda") if kv.uniform else ("lut", "mmawp")
+
+
 def tune_splits(m, kv, B, ctx, M, kst, iters, reps):
-    """Attention backend (VQ: CUDA mma, CUDA scalar, Triton; others: Triton) x split count (32-layer graphs)."""
+    """Attention backend (VQ: LUT, CUDA warp-split/block WMMA, CUDA scalar; others: Triton) x split count."""
     n = ctx + M
     res = {}
-    for be in (("mmaw", "mma", "cuda", "triton") if kv.mode == "vq" else ("triton",)):
+    for be in attn_backends(kv):
+        if be == "lut" and not lut_ok(kv, kst, M):
+            continue
         seen = set()
-        for tp in (256, 512, 1024, 2048):
+        for tp in (64, 128, 256, 512, 1024, 2048):
             sp, ch = split_plan(B, HKV, n, 128, tp)
             if (sp, ch) in seen:
                 continue
@@ -232,7 +244,7 @@ def tune_splits(m, kv, B, ctx, M, kst, iters, reps):
     return best["splits"], best["chunk"], best["backend"], res
 
 
-def measure(m, kv, B, ctx, M, kw, kst, senc, iters, reps, comps=True):
+def measure(m, kv, B, ctx, M, kw, kst, senc, iters, reps, comps=True, vd_too=False):
     sp, ch, be, tune = tune_splits(m, kv, B, ctx, M, kst, iters, reps)
     st = Step(m, kv, B, ctx, M, kw, kst, senc, sp, ch, be)
     r = {"B": B, "ctx": ctx, "M": M, "R": B * M, "kw": kw, "kst": kst, "senc": senc, "splits": sp, "chunk": ch,
@@ -245,6 +257,11 @@ def measure(m, kv, B, ctx, M, kw, kst, senc, iters, reps, comps=True):
             r["encode"] = gtime(st.encode, iters, reps)
         r["fixed"] = gtime(st.fixed, iters, reps)
         r["sum_components_us"] = sum(r[c]["us"] for c in ("weights", "attention", "encode", "fixed") if c in r)
+    if vd_too:  # FR-Spec draft lm_head (V_d = 32768)
+        st.vd = True
+        r["full_vd"] = gtime(st.full, iters, reps)
+        if comps:
+            r["fixed_vd"] = gtime(st.fixed, iters, reps)
     n = ctx + M
     kv_bytes = NL * kv.bytes_read(B * n, kst if kv.mode == "vq" else None)
     r["kv_bytes_read"] = kv_bytes
@@ -293,12 +310,13 @@ def main():
     ap.add_argument("--Ms", type=int, nargs="+", default=[2, 3, 5])
     ap.add_argument("--iters", type=int, default=3)
     ap.add_argument("--reps", type=int, default=5)
-    ap.add_argument("--formats", nargs="+", default=["d8S2", "d16S4", "bf16", "int4", "int2"])
+    ap.add_argument("--formats", nargs="+", default=["d8S2", "d8K16x4", "d8K16x2K256"])
     ap.add_argument("--run", required=True)
     ap.add_argument("--no-save", action="store_true")
     ap.add_argument("--jsonl", default=None, help="append per-(B,ctx) records here as they finish")
     ap.add_argument("--reuse", default=None, help="jsonl of an earlier run: co-tenant-free (B, ctx) records are reused")
     ap.add_argument("--max-attempts", type=int, default=6)
+    ap.add_argument("--no-vd", dest="vd", action="store_false", help="skip the FR-Spec V_d draft lm_head timings")
     a = ap.parse_args()
     torch.set_grad_enabled(False)
     log = lambda s: print(time.strftime("%H:%M:%S"), s, flush=True)  # noqa: E731
@@ -319,18 +337,19 @@ def main():
         log(f"[co-tenant] during weight-path microbench: {c} -> retry")
     total = torch.cuda.get_device_properties(0).total_memory
     res = {"weights_paths": wpaths, "weight_bytes_alloc": wbytes, "grid": [], "fit": []}
-    fmts = {"d8S2": ("vq", 8, 2), "d16S4": ("vq", 16, 4), "bf16": ("bf16", 8, 1), "int4": ("int4", 8, 1),
-            "int2": ("int2", 8, 1)}
+    fmts = {"bf16": ("bf16", 8, None), "int4": ("int4", 8, None), "int2": ("int2", 8, None)}
+    fmts.update({k: ("vq", d, bits) for k, (d, bits) in FORMATS.items()})
 
     def point(B, ctx):
         rec = {"B": B, "ctx": ctx, "co_tenants_start": cotenants() or "none", "formats": {}}
         for fname in a.formats:
-            mode, d, S = fmts[fname]
+            mode, d, bits = fmts[fname]
+            S = len(bits) if bits else 1
             gc.collect()
             torch.cuda.empty_cache()
             free = total - torch.cuda.memory_allocated() - 300 * 2**20
-            per_tok = {"vq": 2 * S * (D // d), "bf16": 4 * D, "int4": 2 * (D // 2 + 2), "int2": 2 * (D // 4 + 2)}[
-                mode] * HKV * NL
+            per_tok = {"vq": 2 * sum(D // d * b // 8 for b in bits) if bits else 0, "bf16": 4 * D,
+                       "int4": 2 * (D // 2 + 2), "int2": 2 * (D // 4 + 2)}[mode] * HKV * NL
             ok, need = kv_fits(B, ctx, per_tok, free)
             res["fit"].append({"B": B, "ctx": ctx, "format": fname, "kv_GiB": need / 2**30, "free_GiB": free / 2**30,
                                "fits": ok})
@@ -338,7 +357,7 @@ def main():
                 log(f"[skip] B={B} ctx={ctx} {fname}: KV {need / 2**30:.1f} GiB > free {free / 2**30:.1f} GiB")
                 continue
             try:
-                kv = KVCache(NL, B, HKV, ctx + 8, D, mode, d, S, gen=m.gen)
+                kv = KVCache(NL, B, HKV, ctx + 8, D, mode, d, gen=m.gen, bits=bits)
             except torch.cuda.OutOfMemoryError as e:
                 res["fit"][-1]["fits"] = False
                 res["fit"][-1]["oom"] = str(e)[:200]
@@ -347,22 +366,29 @@ def main():
             fr = {}
             try:
                 if mode == "vq":
-                    runs = {"ar": (1, 2, S, S), "d_w1_kvall": (1, 1, S, S), "d_w2_kv1": (1, 2, 1, 1),
-                            "d_w1_kv1": (1, 1, 1, 1)}
-                    if S == 4:
-                        runs["d_w2_kv2"] = (1, 2, 2, 2)
-                        runs["d_w1_kv2"] = (1, 1, 2, 2)
+                    # drafts: weight prefix kw in {1, 2} x KV stage prefix k < S (+ W1 with the full KV);
+                    # name d_w{kw}_kv{bits}: bits = KV index bits/element read by the draft (e.g. 0.5, 1)
+                    runs = {"ar": (1, 2, S, S)}
+                    for k in range(1, S):
+                        kb = sum(bits[:k]) / d
+                        for kw in (1, 2):
+                            runs[f"d_w{kw}_kv{kb:g}b"] = (1, kw, k, k)
+                    runs["d_w1_kvall"] = (1, 1, S, S)
                     for M in a.Ms:
                         runs[f"v{M}"] = (M, 2, S, S)
                     for name, (M, kw, kst, senc) in runs.items():
-                        fr[name] = measure(m, kv, B, ctx, M, kw, kst, senc, a.iters, a.reps)
+                        fr[name] = measure(m, kv, B, ctx, M, kw, kst, senc, a.iters, a.reps,
+                                           vd_too=name.startswith("d_") and a.vd)
                         log(f"B={B} ctx={ctx} {fname} {name}: full {fr[name]['full']['us']:.0f}us "
                             f"w {fr[name]['weights']['us']:.0f} attn {fr[name]['attention']['us']:.0f} "
                             f"enc {fr[name]['encode']['us']:.0f} fix {fr[name]['fixed']['us']:.0f} "
-                            f"attn {fr[name]['attn_GBps']:.0f} GB/s")
+                            f"attn {fr[name]['attn_GBps']:.0f} GB/s {fr[name]['attn_backend']}"
+                            + (f" | vd {fr[name]['full_vd']['us']:.0f}us" if "full_vd" in fr[name] else ""))
                     T_ar = fr["ar"]["full"]["us"]
                     Tv = {M - 1: fr[f"v{M}"]["full"]["us"] for M in a.Ms}
                     fr["derived"] = {k: derive(T_ar, fr[k]["full"]["us"], Tv) for k in fr if k.startswith("d_")}
+                    fr["derived_vd"] = {k: derive(T_ar, fr[k]["full_vd"]["us"], Tv) for k in fr
+                                        if k.startswith("d_") and "full_vd" in fr[k]}
                 elif mode == "bf16":
                     runs = {"ar": (1, 2, 1, 1), "d_w1": (1, 1, 1, 1)}
                     for M in a.Ms:
@@ -435,7 +461,9 @@ def main():
         "cpu_pin": os.environ.get("SR_PIN", "taskset -c 0-15,32-47, nice 10"),
         "weight_path_rule": "per (shape, R, kw) faster of nestg MMA and dequant+cuBLAS (32-layer microbench)",
         "derived_note": "c, tau_breakeven, ceiling are [I] computed from measured full-step graphs; overhead "
-                        "(accept/rollback/bookkeeping) not included; lm_head full vocab in all steps"},
+                        "(accept/rollback/bookkeeping) not included; target/verify use the full-vocab lm_head; drafts are timed with "
+                        "the full lm_head (derived) and with an FR-Spec V_d=32768 lm_head (derived_vd)",
+        "kv_formats": {f: FORMATS.get(f) for f in a.formats}},
         metrics=res, model_dir="/data/models/llama3.1_8b_instruct")
     log(f"saved {p}")
 

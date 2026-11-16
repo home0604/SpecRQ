@@ -128,40 +128,78 @@ def _attn_split(QKV, K, V, CBK, CBV, SCK, SCV, INVF, OP, MP, LP,
 @triton.jit
 def _attn_combine(OP, MP, LP, OUT, SPLITS, HKV: tl.constexpr, G: tl.constexpr, M: tl.constexpr, BM: tl.constexpr,
                   D: tl.constexpr, SP2: tl.constexpr):
+    """Merge SPLITS partials (O unnormalized, m, l; exp2 domain) of one (b, kv-head, row); chunks of SP2 splits."""
     bh = tl.program_id(0)
     r = tl.program_id(1)
     b = bh // HKV
     h = bh % HKV
-    sp = tl.arange(0, SP2)
-    spm = sp < SPLITS
-    o = (bh * SPLITS + sp) * BM + r
-    m = tl.load(MP + o, mask=spm, other=float("-inf"))
-    l = tl.load(LP + o, mask=spm, other=0.0)
-    mx = tl.max(m, 0)
-    w = tl.where(spm & (m > float("-inf")), tl.exp2(m - mx), 0.0)
     dd = tl.arange(0, D)
-    a = tl.load(OP + o[:, None] * D + dd[None, :], mask=spm[:, None], other=0.0)
-    out = tl.sum(a * w[:, None], 0) / tl.sum(l * w, 0)
+    mx = tl.max(tl.full([SP2], float("-inf"), tl.float32), 0)
+    for c0 in range(0, SPLITS, SP2):
+        sp = c0 + tl.arange(0, SP2)
+        m = tl.load(MP + (bh * SPLITS + sp) * BM + r, mask=sp < SPLITS, other=float("-inf"))
+        mx = tl.maximum(mx, tl.max(m, 0))
+    acc = tl.zeros([D], dtype=tl.float32)
+    den = tl.sum(tl.zeros([SP2], dtype=tl.float32), 0)
+    for c0 in range(0, SPLITS, SP2):
+        sp = c0 + tl.arange(0, SP2)
+        spm = sp < SPLITS
+        o = (bh * SPLITS + sp) * BM + r
+        m = tl.load(MP + o, mask=spm, other=float("-inf"))
+        l = tl.load(LP + o, mask=spm, other=0.0)
+        w = tl.where(spm & (m > float("-inf")), tl.exp2(m - mx), 0.0)
+        a = tl.load(OP + o[:, None] * D + dd[None, :], mask=spm[:, None], other=0.0)
+        acc += tl.sum(a * w[:, None], 0)
+        den += tl.sum(l * w, 0)
+    out = acc / den
     rm = r // G
     rg = r % G
     tl.store(OUT + (b * M + rm) * (HKV * G * D) + (h * G + rg) * D + dd, out.to(tl.bfloat16))
 
 
-class KVCache:
-    """One layer-stack of KV storage in a given mode. mode 'vq' (d, S stages), 'bf16', 'int4', 'int2'."""
+FORMATS = {  # name -> (d, per-stage code bits); fmt id of the LUT kernel (None: not supported there)
+    "d8S2": (8, [8, 8]), "d16S4": (16, [8, 8, 8, 8]), "d8K16x4": (8, [4, 4, 4, 4]), "d8K16x2K256": (8, [4, 4, 8])}
+LUT_FMT = {(8, (8, 8)): 0, (8, (4, 4, 4, 4)): 1, (8, (4, 4, 8)): 2}
 
-    def __init__(self, n_layers, B, Hkv, T, D=128, mode="vq", d=8, S=2, C=256, device="cuda", gen=None):
+
+class KVCache:
+    """One layer-stack of KV storage. mode 'vq' (d, per-stage bits; uniform 8-bit stages use the [2,S,B,H,T,NSV]
+    layout of the v1 kernels, other mixes per-stage planes [2,B,H,T,W_s] with 4-bit codes nibble-packed),
+    'bf16', 'int4', 'int2'. planes(layer) -> (K planes, V planes, K codebooks, V codebooks), one entry per stage:
+    planes [B,H,T,W_s] (token-contiguous), codebooks [H,C_s,d]."""
+
+    def __init__(self, n_layers, B, Hkv, T, D=128, mode="vq", d=8, S=2, C=256, device="cuda", gen=None, bits=None):
         self.n_layers, self.B, self.Hkv, self.T, self.D, self.mode = n_layers, B, Hkv, T, D, mode
-        self.d, self.S, self.C = d, S, C
+        self.bits = list(bits) if bits is not None else [8] * S
+        self.d, self.S = d, len(self.bits)
+        self.C = 2 ** self.bits[0] if len(set(self.bits)) == 1 else None
         self.nsv = D // d
-        self.codes, self.cb, self.data, self.scale = [], [], [], []
+        self.uniform = all(b == 8 for b in self.bits)
+        self.widths = [self.nsv * b // 8 for b in self.bits]
+        self.codes, self.cb, self.data, self.scale, self._planes = [], [], [], [], []
         for _ in range(n_layers):
             if mode == "vq":
-                self.codes.append(torch.randint(0, C, (2, S, B, Hkv, T, self.nsv), dtype=torch.uint8, device=device,
-                                                generator=gen))
-                # stage s codebook scaled down geometrically (residual structure); bf16
-                sc = torch.tensor([0.5 ** s for s in range(S)], device=device)[None, None, :, None, None]
-                self.cb.append((torch.randn(2, Hkv, S, C, d, device=device, generator=gen) * sc).to(torch.bfloat16))
+                amp = [0.5 ** s for s in range(self.S)]  # residual structure: stage codebooks shrink
+                if self.uniform:
+                    S_, C_ = self.S, 256
+                    codes = torch.randint(0, C_, (2, S_, B, Hkv, T, self.nsv), dtype=torch.uint8, device=device,
+                                          generator=gen)
+                    sc = torch.tensor(amp, device=device)[None, None, :, None, None]
+                    cb = (torch.randn(2, Hkv, S_, C_, d, device=device, generator=gen) * sc).to(torch.bfloat16)
+                    self.codes.append(codes)
+                    self.cb.append(cb)
+                    self._planes.append(([codes[0, s] for s in range(S_)], [codes[1, s] for s in range(S_)],
+                                         [cb[0, :, s] for s in range(S_)], [cb[1, :, s] for s in range(S_)]))
+                else:
+                    assert d == 8, "mixed / 4-bit stages: d = 8 only"
+                    pl = [torch.randint(0, 256, (2, B, Hkv, T, w), dtype=torch.uint8, device=device, generator=gen)
+                          for w in self.widths]
+                    cbs = [(torch.randn(2, Hkv, 2 ** b, d, device=device, generator=gen) * a).to(torch.bfloat16)
+                           for b, a in zip(self.bits, amp)]
+                    self.codes.append(pl)
+                    self.cb.append(cbs)
+                    self._planes.append(([p[0] for p in pl], [p[1] for p in pl], [c[0] for c in cbs],
+                                         [c[1] for c in cbs]))
             elif mode == "bf16":
                 self.data.append(torch.randn(2, B, Hkv, T, D, device=device, generator=gen).to(torch.bfloat16))
             else:
@@ -170,15 +208,21 @@ class KVCache:
                                                generator=gen))
                 self.scale.append((torch.rand(2, B, Hkv, T, device=device, generator=gen) * 0.2 + 0.05).half())
 
+    def planes(self, layer):
+        return self._planes[layer]
+
+    def lut_fmt(self):
+        return LUT_FMT.get((self.d, tuple(self.bits)))
+
     def nbytes_per_token(self):
-        per = {"vq": 2 * self.S * self.nsv, "bf16": 2 * self.D * 2, "int4": 2 * (self.D // 2 + 2),
-               "int2": 2 * (self.D // 4 + 2)}[self.mode]
+        per = {"vq": 2 * sum(self.widths) if self.mode == "vq" else 0, "bf16": 2 * self.D * 2,
+               "int4": 2 * (self.D // 2 + 2), "int2": 2 * (self.D // 4 + 2)}[self.mode]
         return per * self.Hkv * self.n_layers
 
     def bytes_read(self, layer_tokens, kst=None):
         """bytes of KV payload read by one attention call over `layer_tokens` tokens (all B, one layer)."""
         if self.mode == "vq":
-            return 2 * (kst or self.S) * self.nsv * self.Hkv * layer_tokens
+            return 2 * sum(self.widths[:(kst or self.S)]) * self.Hkv * layer_tokens
         return self.nbytes_per_token() // self.n_layers * layer_tokens
 
 
@@ -224,6 +268,29 @@ def ext_mma():
     return _EXT_MMA
 
 
+_EXT_LUT = None
+
+
+def ext_lut():
+    """LUT-score / FMA-value VQ attention (vqattn_lut.cu)."""
+    global _EXT_LUT
+    if _EXT_LUT is None:
+        from pathlib import Path
+        from torch.utils.cpp_extension import load
+        ext()
+        _EXT_LUT = load(name="kvq_vqattn_lut", sources=[str(Path(__file__).parent / "csrc" / "vqattn_lut.cu")],
+                        extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17"], verbose=False)
+    return _EXT_LUT
+
+
+def lut_ok(cache, kst, M, smem_max=101376):
+    """True if the LUT kernel can run (format supported, shared memory fits)."""
+    fmt = cache.lut_fmt() if cache.mode == "vq" else None
+    if fmt is None:
+        return False
+    return ext_lut().vq_attn_lut_plan(fmt, kst, M)[0] <= smem_max
+
+
 def vq_attention(qkv, cache: KVCache, layer, ctx, M, G, inv_freq, out, ws, splits, chunk, kst=None, BN=64,
                  num_warps=4, num_stages=1, backend="cuda"):
     """qkv [B*M, (Hkv*G + 2*Hkv)*D] bf16 (pre-RoPE q); attends to positions [0, ctx+M) of `layer`. Writes out
@@ -248,7 +315,27 @@ def vq_attention(qkv, cache: KVCache, layer, ctx, M, G, inv_freq, out, ws, split
         ss_b, ss_h = (SCK.stride(0), SCK.stride(1)) if mode >= 2 else (0, 0)
         kst = 1
     qk_scale = D ** -0.5 * LOG2E
-    if mode == 0 and backend == "mmaw":
+    if mode == 0 and backend == "lut":
+        fmt = cache.lut_fmt()
+        assert fmt is not None, ("LUT kernel: unsupported format", cache.d, cache.bits)
+        nw = 16 if M == 1 else 4
+        assert OP.shape[0] >= B * Hkv * splits * nw * BM, "workspace: attn_workspace(..., splits * 16)"
+        kpl, vpl, kcb, vcb = cache.planes(layer)
+        ext_lut().vq_attn_lut(qkv, kpl, vpl, kcb, vcb, inv_freq, OP, MP, LP, ctx, chunk, splits, B, Hkv, BM, M, fmt,
+                              kst, qk_scale)
+        splits = splits * nw
+    elif mode == 0 and backend == "mmawp":
+        fmt = cache.lut_fmt()
+        assert fmt is not None, ("planar warp-split kernel: unsupported format", cache.d, cache.bits)
+        nw = 4
+        assert OP.shape[0] >= B * Hkv * splits * nw * BM, "workspace"
+        kpl, vpl, kcb, vcb = cache.planes(layer)
+        ext_mma().vq_attn_wp(qkv, kpl, vpl, kcb, vcb, inv_freq, OP, MP, LP, ctx, chunk, splits, B, Hkv, BM, M, fmt,
+                             kst, qk_scale)
+        splits = splits * nw
+    elif mode == 0 and not cache.uniform:
+        raise ValueError(f"backend {backend} supports uniform 8-bit stages only")
+    elif mode == 0 and backend == "mmaw":
         nw = 2 if (cache.d == 16 and kst == 4) else 4
         assert OP.shape[0] >= B * Hkv * splits * nw * BM, "workspace: attn_workspace(..., splits * 4)"
         ext_mma().vq_attn_w(qkv, K, V, CBK, CBV, inv_freq, OP, MP, LP, ctx, chunk, splits, B, Hkv, BM, M, cache.d,
@@ -268,7 +355,7 @@ def vq_attention(qkv, cache: KVCache, layer, ctx, M, G, inv_freq, out, ws, split
                                    HKV=Hkv, G=G, M=M, BM=BM, D=D, DSUB=cache.d, NSV=cache.nsv, KST=kst, BN=BN,
                                    MODE=mode, num_warps=num_warps, num_stages=num_stages)
     _attn_combine[(B * Hkv, G * M)](OP, MP, LP, out, splits, HKV=Hkv, G=G, M=M, BM=BM, D=D,
-                                    SP2=max(2, triton.next_power_of_2(splits)), num_warps=4)
+                                    SP2=min(32, max(2, triton.next_power_of_2(splits))), num_warps=4)
     return out
 
 
@@ -324,14 +411,89 @@ def _encode(QKV, CODES, CB, INVF, ctx, sq_r, c_kv, c_s, c_b, c_h, c_t, cb_kv, cb
 
 def vq_encode(qkv, cache: KVCache, layer, ctx, M, Hq, inv_freq, senc=None):
     """Encode the K (with RoPE) and V of the B*M new rows of qkv into the codes of `layer` at ctx .. ctx+M-1."""
-    codes, cb = cache.codes[layer], cache.cb[layer]
     senc = senc or cache.S
+    if not cache.uniform:
+        return _vq_encode_planar(qkv, cache, layer, ctx, M, Hq, inv_freq, senc)
+    codes, cb = cache.codes[layer], cache.cb[layer]
     nsv, d = cache.nsv, cache.d
     _encode[(qkv.shape[0], cache.Hkv, 2)](qkv, codes, cb, inv_freq, ctx, qkv.stride(0), codes.stride(0),
                                           codes.stride(1), codes.stride(2), codes.stride(3), codes.stride(4),
                                           cb.stride(0), cb.stride(1), cb.stride(2),
-                                          HKV=cache.Hkv, HQ=Hq, M=M, D=cache.D, DSUB=d, NSV=nsv, C=cache.C, SENC=senc,
+                                          HKV=cache.Hkv, HQ=Hq, M=M, D=cache.D, DSUB=d, NSV=nsv, C=256, SENC=senc,
                                           XR=max(16, nsv), XC=max(16, d), num_warps=4)
+
+
+@triton.jit
+def _enc_stage(x, cbp, dst, ri, ci, xm, C: tl.constexpr, NIB: tl.constexpr, DSUB: tl.constexpr, NSV: tl.constexpr,
+               XR: tl.constexpr):
+    cidx = tl.arange(0, C)
+    cbt = tl.load(cbp + cidx[None, :] * DSUB + ci[:, None], mask=(ci[:, None] < DSUB), other=0.0).to(tl.float32)
+    cn = tl.sum(cbt * cbt, 0)
+    dots = tl.dot(x, cbt, input_precision="ieee")
+    code = tl.argmin(cn[None, :] - 2.0 * dots, 1)
+    sel = tl.load(cbp + code[:, None] * DSUB + ci[None, :], mask=xm, other=0.0).to(tl.float32)
+    if NIB:  # two sub-vectors per byte, low nibble = even sub-vector
+        c2 = tl.reshape(code, (XR // 2, 2))
+        pk = tl.sum(c2 * (1 + 15 * tl.arange(0, 2))[None, :], 1)
+        tl.store(dst + tl.arange(0, XR // 2), pk.to(tl.uint8), mask=tl.arange(0, XR // 2) < NSV // 2)
+    else:
+        tl.store(dst + ri, code.to(tl.uint8), mask=ri < NSV)
+    return x - sel
+
+
+@triton.jit
+def _encode_p(QKV, P0, P1, P2, P3, CB0, CB1, CB2, CB3, INVF, ctx, sq_r,
+              pkv0, pb0, ph0, pkv1, pb1, ph1, pkv2, pb2, ph2, pkv3, pb3, ph3, ckv0, ch0, ckv1, ch1, ckv2, ch2, ckv3,
+              ch3, HKV: tl.constexpr, HQ: tl.constexpr, M: tl.constexpr, D: tl.constexpr, DSUB: tl.constexpr,
+              NSV: tl.constexpr, SENC: tl.constexpr, XR: tl.constexpr, XC: tl.constexpr,
+              B0: tl.constexpr, B1: tl.constexpr, B2: tl.constexpr, B3: tl.constexpr):
+    """Planar-format encode (per-stage code bits B_s in {4, 8}); otherwise as _encode."""
+    r = tl.program_id(0)
+    h = tl.program_id(1)
+    kv = tl.program_id(2)
+    b = r // M
+    pos = ctx + r % M
+    ri = tl.arange(0, XR)
+    ci = tl.arange(0, XC)
+    xm = (ri[:, None] < NSV) & (ci[None, :] < DSUB)
+    idx = ri[:, None] * DSUB + ci[None, :]
+    src = QKV + r * sq_r + (HQ + kv * HKV + h) * D
+    x = tl.load(src + idx, mask=xm, other=0.0).to(tl.float32)
+    xp = tl.load(src + (idx + D // 2) % D, mask=xm, other=0.0).to(tl.float32)
+    f = tl.load(INVF + idx % (D // 2), mask=xm, other=0.0)
+    ang = pos.to(tl.float32) * f
+    isk = (kv == 0).to(tl.float32)
+    sgn = tl.where(idx < D // 2, -1.0, 1.0)
+    x = x * (isk * tl.cos(ang) + (1.0 - isk)) + isk * sgn * xp * tl.sin(ang)
+    x = tl.where(xm, x, 0.0)
+    x = _enc_stage(x, CB0 + kv * ckv0 + h * ch0, P0 + kv * pkv0 + b * pb0 + h * ph0 + pos * (NSV * B0 // 8),
+                   ri, ci, xm, 2 ** B0, B0 == 4, DSUB, NSV, XR)
+    if SENC > 1:
+        x = _enc_stage(x, CB1 + kv * ckv1 + h * ch1, P1 + kv * pkv1 + b * pb1 + h * ph1 + pos * (NSV * B1 // 8),
+                       ri, ci, xm, 2 ** B1, B1 == 4, DSUB, NSV, XR)
+    if SENC > 2:
+        x = _enc_stage(x, CB2 + kv * ckv2 + h * ch2, P2 + kv * pkv2 + b * pb2 + h * ph2 + pos * (NSV * B2 // 8),
+                       ri, ci, xm, 2 ** B2, B2 == 4, DSUB, NSV, XR)
+    if SENC > 3:
+        x = _enc_stage(x, CB3 + kv * ckv3 + h * ch3, P3 + kv * pkv3 + b * pb3 + h * ph3 + pos * (NSV * B3 // 8),
+                       ri, ci, xm, 2 ** B3, B3 == 4, DSUB, NSV, XR)
+
+
+def _vq_encode_planar(qkv, cache, layer, ctx, M, Hq, inv_freq, senc):
+    pl, cbs = cache.codes[layer], cache.cb[layer]
+    S = cache.S
+    P = [pl[min(s, S - 1)] for s in range(4)]
+    CB = [cbs[min(s, S - 1)] for s in range(4)]
+    bits = [cache.bits[min(s, S - 1)] for s in range(4)]
+    st = []
+    for p_ in P:
+        st += [p_.stride(0), p_.stride(1), p_.stride(2)]
+    for c_ in CB:
+        st += [c_.stride(0), c_.stride(1)]
+    _encode_p[(qkv.shape[0], cache.Hkv, 2)](qkv, *P, *CB, inv_freq, ctx, qkv.stride(0), *st,
+                                            HKV=cache.Hkv, HQ=Hq, M=M, D=cache.D, DSUB=cache.d, NSV=cache.nsv,
+                                            SENC=senc, XR=max(16, cache.nsv), XC=max(16, cache.d),
+                                            B0=bits[0], B1=bits[1], B2=bits[2], B3=bits[3], num_warps=4)
 
 
 @triton.jit
@@ -425,16 +587,18 @@ def ref_rope(x, pos, inv_freq):
 
 def ref_dequant_kv(cache: KVCache, layer, kst=None):
     """-> K, V bf16 [B, Hkv, T, D] dequantized (VQ: sum of the first kst stages in fp32, rounded to bf16 as in the
-    kernel; INT: (q - z) * scale)."""
+    kernels; INT: (q - z) * scale)."""
     if cache.mode == "vq":
         kst = kst or cache.S
-        codes, cb = cache.codes[layer], cache.cb[layer]  # [2,S,B,H,T,NSV], [2,H,S,C,d]
+        kpl, vpl, kcb, vcb = cache.planes(layer)
         out = []
-        for kv in range(2):
+        for planes, cbs in ((kpl, kcb), (vpl, vcb)):
             acc = 0
             for s in range(kst):
-                c = codes[kv, s].long()  # [B,H,T,NSV]
-                tab = cb[kv, :, s].float()  # [H,C,d]
+                c = planes[s].long()  # [B,H,T,W]
+                if cache.bits[s] == 4:
+                    c = torch.stack([c & 15, c >> 4], -1).flatten(-2)  # [B,H,T,NSV]
+                tab = cbs[s].float()  # [H,C,d]
                 hidx = torch.arange(cache.Hkv, device=c.device)[None, :, None, None]
                 acc = acc + tab[hidx, c]  # [B,H,T,NSV,d]
             out.append(acc.reshape(*acc.shape[:3], cache.D).to(torch.bfloat16))
@@ -494,5 +658,5 @@ def splits_for(B, Hkv, n, BN=64):
     return split_plan(B, Hkv, n, BN)
 
 
-__all__ = ["KVCache", "vq_attention", "vq_encode", "dense_append", "vq_dequant_weight", "attn_workspace",
+__all__ = ["FORMATS", "LUT_FMT", "lut_ok", "ext_lut", "KVCache", "vq_attention", "vq_encode", "dense_append", "vq_dequant_weight", "attn_workspace",
            "split_plan", "ref_dequant_kv", "ref_attention", "ref_encode", "ref_rope", "inv_freq_llama", "math"]

@@ -11,6 +11,7 @@
 #include <mma.h>
 #include <c10/cuda/CUDAStream.h>
 #include <cuda_runtime.h>
+#include <vector>
 
 using namespace nvcuda;
 
@@ -460,6 +461,228 @@ __global__ void __launch_bounds__(NW * 32) vq_attn_w_kernel(
   if (lane < GM) { MP[o + lane] = sM[lane]; LP[o + lane] = sL[lane]; }
 }
 
+
+// ---------------------------------------------------------------------------------- v2p: warp-split, planar formats
+// Same as vq_attn_w_kernel (d = 8) for per-stage planes [B, H, T, W_s] with 4- or 8-bit codes (verify path of the
+// K16 formats; codebook tables padded to 256 entries per stage in shared memory).
+struct KVPm {
+  const uint8_t* kc[4];
+  const uint8_t* vc[4];
+  long sb[4], sh[4];
+  const __nv_bfloat16* kcb[4];
+  const __nv_bfloat16* vcb[4];
+  long cbh[4];
+};
+template <int FMT>
+struct FmtM;
+template <>
+struct FmtM<0> { __host__ __device__ static constexpr int bits(int) { return 8; } };
+template <>
+struct FmtM<1> { __host__ __device__ static constexpr int bits(int) { return 4; } };
+template <>
+struct FmtM<2> { __host__ __device__ static constexpr int bits(int s) { return s < 2 ? 4 : 8; } };
+
+template <int FMT, int KST, int BMQ, int NW>
+__global__ void __launch_bounds__(NW * 32) vq_attn_wp_kernel(
+    const __nv_bfloat16* __restrict__ qkv, KVPm P, const float* __restrict__ invf,
+    float* __restrict__ OP, float* __restrict__ MP, float* __restrict__ LP, int ctx, int chunk, int splits, int Hkv,
+    int BM, int M, long sq_r, float qk_scale) {
+  constexpr int DSUB = 8, NSV = 16;
+  using SM = Smem2<DSUB, KST, BMQ, NW>;
+  using WS = WarpSm<BMQ>;
+  using CT = typename Code2<NSV>::T;
+  constexpr int BPL = Code2<NSV>::BPL;
+  constexpr int NTH = NW * 32;
+  extern __shared__ __align__(128) uint8_t smem[];
+  __nv_bfloat16* sCbK = reinterpret_cast<__nv_bfloat16*>(smem);
+  __nv_bfloat16* sCbV = sCbK + KST * C * DSUB;
+  __nv_bfloat16* sQ = reinterpret_cast<__nv_bfloat16*>(smem + SM::o_q);
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  uint8_t* wbase = smem + SM::o_w + warp * WS::total;
+  __nv_bfloat16* sKV = reinterpret_cast<__nv_bfloat16*>(wbase + WS::o_kv);
+  float* sS = reinterpret_cast<float*>(wbase + WS::o_s);
+  __nv_bfloat16* sP = reinterpret_cast<__nv_bfloat16*>(wbase + WS::o_p);
+  float* sM = reinterpret_cast<float*>(wbase + WS::o_st);
+  float* sL = sM + BMQ;
+  float* sA = sL + BMQ;
+
+  const int bh = blockIdx.x, sp = blockIdx.y, b = bh / Hkv, h = bh % Hkv;
+  const int GM = G * M;
+  const int n = ctx + M, start = sp * chunk, end = min(start + chunk, n);
+  {
+    constexpr int V16 = C * DSUB * 2 / 16;
+    for (int s = 0; s < KST; ++s) {
+      const uint4* gk = reinterpret_cast<const uint4*>(P.kcb[s] + h * P.cbh[s]);
+      const uint4* gv = reinterpret_cast<const uint4*>(P.vcb[s] + h * P.cbh[s]);
+      uint4* dk = reinterpret_cast<uint4*>(sCbK + s * C * DSUB);
+      uint4* dv = reinterpret_cast<uint4*>(sCbV + s * C * DSUB);
+      const int n16 = (FmtM<FMT>::bits(s) == 8 ? 256 : 16) * DSUB * 2 / 16;
+      for (int i = tid; i < n16 && i < V16; i += NTH) { dk[i] = gk[i]; dv[i] = gv[i]; }
+    }
+  }
+  for (int i = tid; i < BMQ * D; i += NTH) {
+    const int r = i / D, c = i % D;
+    float q = 0.f;
+    if (r < GM) {
+      const int m = r / G, g = r % G;
+      const __nv_bfloat16* qr = qkv + (long)(b * M + m) * sq_r + (h * G + g) * D;
+      float x = __bfloat162float(qr[c]), xp = __bfloat162float(qr[(c + D / 2) % D]);
+      float sn, cs;
+      sincosf((float)(ctx + m) * invf[c % (D / 2)], &sn, &cs);
+      q = (x * cs + (c < D / 2 ? -1.f : 1.f) * xp * sn) * qk_scale;
+    }
+    sQ[r * LDQ + c] = __float2bfloat16(q);
+  }
+  for (int i = lane; i < BMQ * 24; i += 32) sP[i] = __float2bfloat16(0.f);
+  if (lane < BMQ) { sM[lane] = -INFINITY; sL[lane] = 0.f; sA[lane] = 1.f; }
+  constexpr int OT = (BMQ / 16) * (D / 16);
+  wmma::fragment<wmma::accumulator, 16, 16, 16, float> fo[OT];
+#pragma unroll
+  for (int i = 0; i < OT; ++i) wmma::fill_fragment(fo[i], 0.f);
+
+  const int tk = lane >> 1, j0 = (lane & 1) * BPL;  // token in the 16-token sub-tile, first sub-vector
+  CT ck[KST], cv[KST];
+  auto load_codes = [&](int t0) {
+    const int t = t0 + tk;
+    const bool ok = t < end;
+#pragma unroll
+    for (int s = 0; s < KST; ++s) {
+      const long off = b * P.sb[s] + h * P.sh[s];
+      if (ok && FmtM<FMT>::bits(s) == 8) {
+        ck[s] = *reinterpret_cast<const CT*>(P.kc[s] + off + (long)t * 16 + j0);
+        cv[s] = *reinterpret_cast<const CT*>(P.vc[s] + off + (long)t * 16 + j0);
+      } else if (ok) {  // 4-bit stage: 8 nibbles of sub-vectors j0 .. j0+7
+        ck[s] = make_uint2(*reinterpret_cast<const uint32_t*>(P.kc[s] + off + (long)t * 8 + j0 / 2), 0u);
+        cv[s] = make_uint2(*reinterpret_cast<const uint32_t*>(P.vc[s] + off + (long)t * 8 + j0 / 2), 0u);
+      } else {
+        ck[s] = CT{};
+        cv[s] = CT{};
+      }
+    }
+  };
+  auto dequant = [&](const __nv_bfloat16* cb, const CT* cc) {
+#pragma unroll
+    for (int jj = 0; jj < BPL; ++jj) {
+#pragma unroll
+      for (int hf = 0; hf < DSUB / 8; ++hf) {
+        float a[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+#pragma unroll
+        for (int s = 0; s < KST; ++s)
+          add8(a, *reinterpret_cast<const uint4*>(
+                      cb + (s * C + (FmtM<FMT>::bits(s) == 8 ? byte_of(cc[s], jj) : (cc[s].x >> (4 * jj)) & 15)) * DSUB +
+                      hf * 8));
+        *reinterpret_cast<uint4*>(sKV + tk * LDK + (j0 + jj) * DSUB + hf * 8) = pack8(a);
+      }
+    }
+  };
+  __syncthreads();
+  const int first = start + 16 * warp;
+  if (first < end) load_codes(first);
+  for (int t0 = first; t0 < end; t0 += 16 * NW) {
+    CT nk[KST], nv[KST];
+    dequant(sCbK, ck);
+#pragma unroll
+    for (int s = 0; s < KST; ++s) { nk[s] = cv[s]; }  // keep V codes of this sub-tile
+    if (t0 + 16 * NW < end) load_codes(t0 + 16 * NW);  // prefetch (ck/cv now hold the next sub-tile)
+#pragma unroll
+    for (int s = 0; s < KST; ++s) { nv[s] = nk[s]; }
+    __syncwarp();
+#pragma unroll
+    for (int rb = 0; rb < BMQ / 16; ++rb) {
+      wmma::fragment<wmma::accumulator, 16, 16, 16, float> fs;
+      wmma::fill_fragment(fs, 0.f);
+#pragma unroll
+      for (int kk = 0; kk < D / 16; ++kk) {
+        wmma::fragment<wmma::matrix_a, 16, 16, 16, __nv_bfloat16, wmma::row_major> fa;
+        wmma::fragment<wmma::matrix_b, 16, 16, 16, __nv_bfloat16, wmma::col_major> fb;
+        wmma::load_matrix_sync(fa, sQ + rb * 16 * LDQ + kk * 16, LDQ);
+        wmma::load_matrix_sync(fb, sKV + kk * 16, LDK);
+        wmma::mma_sync(fs, fa, fb, fs);
+      }
+      wmma::store_matrix_sync(sS + rb * 16 * 20, fs, 20, wmma::mem_row_major);
+    }
+    __syncwarp();
+    dequant(sCbV, nv);  // V of this sub-tile into the same tile buffer
+    if (lane < GM) {  // softmax, lane = row
+      const int r = lane;
+      const int lim = ctx + r / G;
+      float v[16];
+      float mx = -INFINITY;
+#pragma unroll
+      for (int c = 0; c < 16; ++c) {
+        const int t = t0 + c;
+        v[c] = (t < end && t <= lim) ? sS[r * 20 + c] : -INFINITY;
+        mx = fmaxf(mx, v[c]);
+      }
+      const float mo = sM[r];
+      const float mn = fmaxf(mo, mx);
+      const float ms = mn == -INFINITY ? 0.f : mn;
+      float sum = 0.f;
+#pragma unroll
+      for (int c = 0; c < 16; ++c) {
+        const __nv_bfloat16 pb = __float2bfloat16(exp2f(v[c] - ms));
+        sP[r * 24 + c] = pb;
+        sum += __bfloat162float(pb);
+      }
+      const float al = exp2f(mo - ms);
+      sA[r] = al;
+      sL[r] = sL[r] * al + sum;
+      sM[r] = mn;
+    }
+    __syncwarp();
+#pragma unroll
+    for (int i = 0; i < OT; ++i) {
+      const int rb = i / (D / 16), cb = i % (D / 16);
+#pragma unroll
+      for (int e = 0; e < fo[i].num_elements; ++e) fo[i].x[e] *= sA[rb * 16 + (lane >> 2) + 8 * ((e >> 1) & 1)];
+      wmma::fragment<wmma::matrix_a, 16, 16, 16, __nv_bfloat16, wmma::row_major> fa;
+      wmma::fragment<wmma::matrix_b, 16, 16, 16, __nv_bfloat16, wmma::row_major> fb;
+      wmma::load_matrix_sync(fa, sP + rb * 16 * 24, 24);
+      wmma::load_matrix_sync(fb, sKV + cb * 16, LDK);
+      wmma::mma_sync(fo[i], fa, fb, fo[i]);
+    }
+    __syncwarp();
+  }
+  // partial of this warp -> split index sp * NW + warp (staging through the warp's sKV/sS region as fp32 [16][D+4])
+  const long o = (long)(bh * splits * NW + sp * NW + warp) * BM;
+  float* stg = reinterpret_cast<float*>(wbase + WS::o_kv);  // [16][68] fp32 = 4352 bytes = the sKV tile
+#pragma unroll
+  for (int rb = 0; rb < BMQ / 16; ++rb) {
+#pragma unroll
+    for (int half = 0; half < 2; ++half) {
+      __syncwarp();
+#pragma unroll
+      for (int cb = 0; cb < 4; ++cb)
+        wmma::store_matrix_sync(stg + cb * 16, fo[rb * (D / 16) + half * 4 + cb], 68, wmma::mem_row_major);
+      __syncwarp();
+      for (int i = lane; i < 16 * 64; i += 32) {
+        const int r = rb * 16 + i / 64, c = i % 64;
+        if (r < GM) OP[(o + r) * D + half * 64 + c] = stg[(i / 64) * 68 + c];
+      }
+    }
+  }
+  __syncwarp();
+  if (lane < GM) { MP[o + lane] = sM[lane]; LP[o + lane] = sL[lane]; }
+}
+
+
+template <int FMT, int KST, int BMQ, int NW>
+void launch_wp(torch::Tensor qkv, const KVPm& P, torch::Tensor invf, torch::Tensor OP, torch::Tensor MP,
+               torch::Tensor LP, int ctx, int chunk, int splits, int B, int Hkv, int BM, int M, float qk_scale) {
+  auto k = vq_attn_wp_kernel<FMT, KST, BMQ, NW>;
+  constexpr int sm = Smem2<8, KST, BMQ, NW>::total;
+  static_assert(sm <= 101376, "smem");
+  static bool set = false;
+  if (!set) {
+    TORCH_CHECK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, sm) == cudaSuccess, "smem attr");
+    set = true;
+  }
+  dim3 grid(B * Hkv, splits);
+  k<<<grid, NW * 32, sm, c10::cuda::getCurrentCUDAStream()>>>(
+      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), P, invf.data_ptr<float>(), OP.data_ptr<float>(),
+      MP.data_ptr<float>(), LP.data_ptr<float>(), ctx, chunk, splits, Hkv, BM, M, qkv.stride(0), qk_scale);
+}
+
 template <int DSUB, int KST, int BMQ, int NW>
 void launch_w(torch::Tensor qkv, torch::Tensor kc, torch::Tensor vc, torch::Tensor cbk, torch::Tensor cbv,
               torch::Tensor invf, torch::Tensor OP, torch::Tensor MP, torch::Tensor LP, int ctx, int chunk,
@@ -536,9 +759,44 @@ void vq_attn_mma(torch::Tensor qkv, torch::Tensor kc, torch::Tensor vc, torch::T
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
+
+// planar warp-split (d = 8): fmt 0 = [8,8], 1 = [4,4,4,4], 2 = [4,4,8]; warps per block: 4 (2 for kst 4)
+void vq_attn_wp(torch::Tensor qkv, std::vector<torch::Tensor> kpl, std::vector<torch::Tensor> vpl,
+                std::vector<torch::Tensor> kcb, std::vector<torch::Tensor> vcb, torch::Tensor invf, torch::Tensor OP,
+                torch::Tensor MP, torch::Tensor LP, int64_t ctx, int64_t chunk, int64_t splits, int64_t B, int64_t Hkv,
+                int64_t BM, int64_t M, int64_t fmt, int64_t kst, double qk_scale) {
+  KVPm P{};
+  for (int s = 0; s < kst; ++s) {
+    P.kc[s] = kpl[s].data_ptr<uint8_t>();
+    P.vc[s] = vpl[s].data_ptr<uint8_t>();
+    TORCH_CHECK(kpl[s].stride(3) == 1 && kpl[s].stride(2) == kpl[s].size(3), "plane token-contiguous");
+    P.sb[s] = kpl[s].stride(0);
+    P.sh[s] = kpl[s].stride(1);
+    P.kcb[s] = reinterpret_cast<const __nv_bfloat16*>(kcb[s].data_ptr());
+    P.vcb[s] = reinterpret_cast<const __nv_bfloat16*>(vcb[s].data_ptr());
+    P.cbh[s] = kcb[s].stride(0);
+  }
+  TORCH_CHECK(G * M <= 32, "G*M <= 32");
+  const int bmq = G * M <= 16 ? 16 : 32;
+#define ARGP qkv, P, invf, OP, MP, LP, (int)ctx, (int)chunk, (int)splits, (int)B, (int)Hkv, (int)BM, (int)M, \
+             (float)qk_scale
+#define CASE_P(F, KS, NW_) \
+  if (bmq == 16) launch_wp<F, KS, 16, NW_>(ARGP); else launch_wp<F, KS, 32, NW_>(ARGP);
+  if (fmt == 0) {
+    if (kst == 1) { CASE_P(0, 1, 4) } else { CASE_P(0, 2, 4) }
+  } else if (fmt == 1) {
+    if (kst == 1) { CASE_P(1, 1, 4) } else if (kst == 2) { CASE_P(1, 2, 4) } else if (kst == 3) { CASE_P(1, 3, 4) }
+    else { CASE_P(1, 4, 4) }
+  } else {
+    if (kst == 1) { CASE_P(2, 1, 4) } else if (kst == 2) { CASE_P(2, 2, 4) } else { CASE_P(2, 3, 4) }
+  }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("vq_attn_mma", &vq_attn_mma);
   m.def("vq_attn_mma_smem", &vq_attn_mma_smem);
   m.def("vq_attn_w", &vq_attn_w);
   m.def("vq_attn_w_nw", &vq_attn_w_nw);
+  m.def("vq_attn_wp", &vq_attn_wp);
 }
