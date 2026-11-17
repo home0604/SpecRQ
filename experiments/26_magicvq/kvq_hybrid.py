@@ -69,6 +69,9 @@ def hybrid_attention(qkv, vqc, wc, layer, ctx, wlen, M, G, inv_freq, out, ws1, w
     if backend == "pre":
         from kvq_prerope import prerope_partials
         s1 = prerope_partials(qkv, vqc, aff, layer, ctx, M, G, inv_freq, ws1, splits, chunk, kst)
+    elif backend == "kivi":
+        from kivi_attn import kivi_partials
+        s1 = kivi_partials(qkv, vqc, layer, ctx, M, G, inv_freq, ws1, splits, chunk)
     else:
         grab = _Grab()
         orig = K._attn_combine

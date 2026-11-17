@@ -327,6 +327,7 @@ def main():
     ap.add_argument("--gammas", type=int, nargs="+", default=[1, 2, 3, 4, 6, 8])
     ap.add_argument("--run", default="v1")
     ap.add_argument("--limit", type=int, default=None, help="debug: prompts per set")
+    ap.add_argument("--dump_matches", action="store_true")
     ap.add_argument("--mode", choices=["tau", "qual"], default="tau",
                     help="qual: teacher-forced step-1 draft vs target on the TRUE book continuation (gen tokens after "
                          "the ctx-token PG-19 prompt): TV, KL(target||draft), top-1 agreement, PPL")
@@ -382,6 +383,8 @@ def main():
                 mt = (pr == tgt[None])  # [G, N]
                 matches = mt.tolist()
                 d = {"match_rate_step": mt.float().mean(1).tolist()}
+                if a.dump_matches:  # per-position step-m matches (for replaying acceptance in the e2e timing loop)
+                    d["matches"] = [[int(x) for x in row] for row in matches]
                 for g in a.gammas:
                     if g <= a.G:
                         d[f"g{g}"] = walk(matches, g, N)

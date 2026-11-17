@@ -111,6 +111,15 @@ def tok_eq(n, ctx):
     return (ctx - SINKS - R) * bits(n) / 16 + SINKS + R + cb
 
 
+def kv_only(n, ctx):
+    """draft KV bytes without codebook / decoder-table bytes (codebooks amortised over a large batch)."""
+    s = parse(n)
+    if s["kind"] != "vq":
+        return tok_eq(n, ctx)
+    R = s["R"]
+    return (ctx - SINKS - R) * bits(n) / 16 + SINKS + R
+
+
 def draft_time(n, rec):
     """-> (T_draft_us, T_enc(M) dict or None, note)."""
     s = parse(n)
@@ -216,7 +225,8 @@ def main():
                     continue
                 q = qual.get(c, {}).get(n, {}) if sname == "pg19" else {}
                 rows.append({"draft": n, "family": family(n), "bits": bits(n), "tok_eq": tok_eq(n, c),
-                             "kv_frac": tok_eq(n, c) / c, "alpha1": v["alpha_step"][0],
+                             "kv_frac": tok_eq(n, c) / c, "kv_frac_amort": kv_only(n, c) / c,
+                             "alpha1": v["alpha_step"][0],
                              **{f"tau_g{g}": v[f"tau_g{g}"] for g in gam},
                              "tv": q.get("tv"), "kl": q.get("kl_target_draft"), "top1": q.get("top1_agree"),
                              "ppl": q.get("ppl")})
@@ -260,7 +270,8 @@ def main():
                     Te = enc.get(str(g + 1), 0.0) if enc else 0.0
                     per[g] = r[f"tau_g{g}"] * T_AR / (g * Td + Tv + Te)
                 bg = max(per, key=per.get)
-                rows.append({"draft": n, "family": r["family"], "kv_frac": r["kv_frac"], "T_draft_ms": Td / 1e3,
+                rows.append({"draft": n, "family": r["family"], "kv_frac": r["kv_frac"],
+                             "kv_frac_amort": r["kv_frac_amort"], "T_draft_ms": Td / 1e3,
                              "c": Td / T_AR, "best_gamma": bg, "speedup": per[bg], "tau_at_best": r[f"tau_g{bg}"],
                              "tau_g4": r["tau_g4"], "speedup_per_gamma": per, "timing_note": note})
             rows.sort(key=lambda x: -x["speedup"])
@@ -285,10 +296,12 @@ def main():
     json.dump(out, open(base + "_table.json", "w"), indent=1)
     open(base + "_tables.md", "w").write(txt + "\n")
     if a.plots:
-        out["plots"] = plots(out, base, a.set)
-        if "chat" in out["tau"]:
-            out["plots"] += plots(out, base, "chat", "_chat", (("tau_g2", "tau (gamma=2)"), ("tau_g4", "tau (gamma=4)")),
-                                  speed=False)
+        out["plots"] = []
+        for xk, sx in (("kv_frac", ""), ("kv_frac_amort", "_amort")):
+            out["plots"] += plots(out, base, a.set, sx, xk=xk)
+            if "chat" in out["tau"]:
+                out["plots"] += plots(out, base, "chat", "_chat" + sx, (("tau_g2", "tau (gamma=2)"),
+                                                                        ("tau_g4", "tau (gamma=4)")), speed=False, xk=xk)
     if a.save:
         sys.path.insert(0, REPO)
         from tools.results import save_result
@@ -310,7 +323,11 @@ def figlegend(fig, axs):
     fig.tight_layout()
 
 
-def plots(out, base, sname, suffix="", ykeys=None, speed=True):
+XL = {"kv_frac": "draft KV bytes / full bf16 KV (B=1, incl. codebooks)",
+      "kv_frac_amort": "draft KV bytes / full bf16 KV (codebooks amortised, large B)"}
+
+
+def plots(out, base, sname, suffix="", ykeys=None, speed=True, xk="kv_frac"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -328,18 +345,18 @@ def plots(out, base, sname, suffix="", ykeys=None, speed=True):
         for ax, c in zip(axs[0], ctxs):
             rows = [r for r in out["tau"][sname][c] if r.get(ykey) is not None and r["family"] not in ("exact", "gsrq-kv")]
             for sr in sorted({series(r["draft"]) for r in rows}):
-                rr = sorted([r for r in rows if series(r["draft"]) == sr], key=lambda r: r["kv_frac"])
+                rr = sorted([r for r in rows if series(r["draft"]) == sr], key=lambda r: r[xk])
                 f = rr[0]["family"]
-                ax.plot([r["kv_frac"] for r in rr], [r[ykey] for r in rr], marker=mk[f], color=col[f], lw=1,
+                ax.plot([r[xk] for r in rr], [r[ykey] for r in rr], marker=mk[f], color=col[f], lw=1,
                         ms=4, label=FAMILY_LABEL[f] + sr[len(f):])
             better_low = ykey == "tv"
-            pts = [(r["kv_frac"], -r[ykey] if better_low else r[ykey], r["draft"]) for r in rows if r["family"] != "topk"]
+            pts = [(r[xk], -r[ykey] if better_low else r[ykey], r["draft"]) for r in rows if r["family"] != "topk"]
             front = pareto(pts)
-            fr = sorted([r for r in rows if r["draft"] in front], key=lambda r: r["kv_frac"])
-            ax.plot([r["kv_frac"] for r in fr], [r[ykey] for r in fr], color="k", lw=2, alpha=0.3, label="Pareto front")
+            fr = sorted([r for r in rows if r["draft"] in front], key=lambda r: r[xk])
+            ax.plot([r[xk] for r in fr], [r[ykey] for r in fr], color="k", lw=2, alpha=0.3, label="Pareto front")
             ax.set_xscale("log")
             ax.set_title(f"ctx {c}")
-            ax.set_xlabel("draft KV bytes / full bf16 KV (B=1)")
+            ax.set_xlabel(XL[xk])
             ax.set_ylabel(ylab)
             ax.grid(alpha=0.3)
         figlegend(fig, axs)
@@ -354,7 +371,7 @@ def plots(out, base, sname, suffix="", ykeys=None, speed=True):
     if keys and speed:
         for xkey, ykey, xl, yl, logx, tag in (("c", "tau_g4", "measured T_draft / T_target", "tau (gamma=4)", False,
                                                "tau_vs_c"),
-                                              ("kv_frac", "speedup", "draft KV bytes / full bf16 KV (B=1)",
+                                              (xk, "speedup", XL[xk],
                                                "speedup vs AR [computed from measured parts]", True,
                                                "speedup_vs_bytes")):
             nc = min(4, len(keys))
@@ -383,7 +400,7 @@ def plots(out, base, sname, suffix="", ykeys=None, speed=True):
             for j in range(len(keys), nr * nc):
                 axs[j // nc][j % nc].axis("off")
             figlegend(fig, axs)
-            fn = f"{base}_{tag}.png"
+            fn = f"{base}{suffix}_{tag}.png"
             fig.savefig(fn, dpi=120, bbox_inches="tight")
             plt.close(fig)
             files.append(fn)

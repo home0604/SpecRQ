@@ -1,0 +1,30 @@
+{
+ "args": {
+  "B": 8,
+  "ctx": 32768,
+  "draft": "kivi4+r128",
+  "tau_draft": "kivi4g32+r128",
+  "gamma": 6,
+  "traces": "/data/lsh/results_accept/magicvq/tau/tau_e2edump_ctx32768.json",
+  "set": "pg19",
+  "rounds": 60,
+  "reps": 3,
+  "tag": "v1"
+ },
+ "spec_tok_per_s": [
+  523.6219493348373,
+  529.9131791986802,
+  533.0345340655383
+ ],
+ "ar_tok_per_s": [
+  469.0167569224124,
+  482.13756300278146,
+  482.02181082065465
+ ],
+ "speedup_e2e_median": 1.0993551895431644,
+ "tau_replayed": 6.76875,
+ "cotenants_start": [],
+ "cotenants_end": [],
+ "draft_backend": "kivi",
+ "target_backend": "triton"
+}

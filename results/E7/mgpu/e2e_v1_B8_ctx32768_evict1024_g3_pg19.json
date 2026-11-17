@@ -1,0 +1,30 @@
+{
+ "args": {
+  "B": 8,
+  "ctx": 32768,
+  "draft": "evict1024",
+  "tau_draft": "snapkv1024",
+  "gamma": 3,
+  "traces": "/data/lsh/results_accept/magicvq/tau/tau_e2edump_ctx32768.json",
+  "set": "pg19",
+  "rounds": 60,
+  "reps": 3,
+  "tag": "v1"
+ },
+ "spec_tok_per_s": [
+  637.3055798593042,
+  645.4255895655693,
+  643.7743593853477
+ ],
+ "ar_tok_per_s": [
+  469.660601310117,
+  468.8726824813247,
+  482.11250895160845
+ ],
+ "speedup_e2e_median": 1.3707225123622055,
+ "tau_replayed": 3.55,
+ "cotenants_start": [],
+ "cotenants_end": [],
+ "draft_backend": "triton",
+ "target_backend": "triton"
+}
