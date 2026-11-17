@@ -87,6 +87,12 @@ def draft_specs(names):
             base, _, r = n.partition("+r")
             b, _, g = base[4:].partition("g")
             out[n] = {"kind": "kivi", "bits": int(b), "group": int(g) if g else 128, "R": int(r) if r else 0}
+        elif n.startswith("hyb"):  # v4 hybrid: SnapKV-selected W tokens bf16 + every other token VQ (disjoint sets)
+            import re
+            m = re.fullmatch(r"hyb(\d+)([a-z0-9_]+?)L(\d)", n)
+            assert m, n
+            k = int(m.group(3))
+            out[n] = {"kind": "hyb", "budget": int(m.group(1)), "fmt": m.group(2), "level": k, "lk": k, "lv": k, "R": 0}
         elif n.startswith("vq"):
             import re
             m = re.fullmatch(r"vq([a-z0-9_]+?)(?:L(\d)|K(\d)V(\d))(?:\+r(\d+))?", n)
@@ -112,7 +118,9 @@ def kv_tokens_equiv(spec, kvqs, ctx):
         return ctx
     R = spec.get("R", 0)
     cbt = 0.0
-    if spec["kind"] == "vq":
+    if spec["kind"] == "hyb":  # W bf16 (SnapKV set incl. its 32-token window) + the other ctx - W tokens VQ
+        R = spec["budget"] - SINKS
+    if spec["kind"] in ("vq", "hyb"):
         q = kvqs[spec["fmt"]]
         cbt = (q.cb_bytes() if hasattr(q, "cb_bytes") else
                (cb_bytes(q, spec["lk"]) + cb_bytes(q, spec["lv"])) / 2) / BF16_TOKEN_BYTES
@@ -135,7 +143,7 @@ def cb_bytes(q, level):
 
 def bits_of(spec, kvqs):
     """bits / element averaged over K and V (a side at level 0 counts 16)."""
-    if spec["kind"] == "vq":
+    if spec["kind"] in ("vq", "hyb"):
         q = kvqs[spec["fmt"]]
         if hasattr(q, "bits_k"):  # CommVQ: fixed rate per side
             bk, bv = q.bits_k(), q.bits_v()

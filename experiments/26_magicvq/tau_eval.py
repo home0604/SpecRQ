@@ -61,6 +61,7 @@ def rp(x, c, s):
     return rope(x[None], c[None], s[None])[0]
 
 
+TIMES = None  # optional {group key: seconds} profile of the draft groups in tf_pass (set to {} to enable)
 SNAP = {"maxb": 0, "win": 32, "ks": 5, "idx": []}  # SnapKV selection (MagicDec Engine/SnapKV defaults)
 
 
@@ -179,6 +180,19 @@ def tf_pass(f, ids_full, P, Kst, Vst, cs, specs, kvqs, G, metrics=False):
                                  sin[None, P:P + N].expand(G, -1, -1))
                   if lv:
                       vs = q_.quant(l, 1, vs, [lv])[lv]
+              hyb = None
+              if s["kind"] == "hyb":  # VQ context with the SnapKV-selected tokens (per kv-head) and the SnapKV window
+                  # (last `win` prompt tokens + generated tokens) replaced by the exact bf16 KV: one softmax over the
+                  # disjoint union == LSE merge of the bf16 part and the VQ part
+                  hk = ctxs[(s["fmt"], "K", s["lk"])].clone()
+                  hv = ctxs[(s["fmt"], "V", s["lv"])].clone()
+                  sel = SNAP["idx"][l][:, : s["budget"] - SNAP["win"]]
+                  ix = sel[..., None].expand(-1, -1, f.D)
+                  hk.transpose(0, 1).scatter_(1, ix, Kx.transpose(0, 1).gather(1, ix))
+                  hv.transpose(0, 1).scatter_(1, ix, Vx.transpose(0, 1).gather(1, ix))
+                  lo = P - SNAP["win"]
+                  hk[lo:Tt], hv[lo:Tt] = Kx[lo:Tt], Vx[lo:Tt]
+                  hyb = (hk, hv)
               out = torch.empty(G, N, f.H, f.D, device=dev, dtype=torch.bfloat16)
               for m in range(1, G + 1):
                   qm = rp(qs[m - 1].float(), cos[P:P + N], sin[P:P + N]) * scale
@@ -211,6 +225,8 @@ def tf_pass(f, ids_full, P, Kst, Vst, cs, specs, kvqs, G, metrics=False):
                                (Kx[lo:Tt], Vx[lo:Tt],
                                 lambda i0, i1, jw=jw, m=m, W=W: (jw[None, :] <= ipos[i0:i1, None] - m)
                                 & (jw[None, :] > ipos[i0:i1, None] - W))]
+                  elif s["kind"] == "hyb":
+                      parts = [(hyb[0], hyb[1], m_le(m))]
                   elif s["kind"] in ("vq", "kivi"):
                       Kc, Vc = ((ctxs[(s["fmt"], "K", s["lk"])], ctxs[(s["fmt"], "V", s["lv"])]) if s["kind"] == "vq"
                                 else ctxs[("kivi", s["bits"], s["group"])])
@@ -226,14 +242,16 @@ def tf_pass(f, ids_full, P, Kst, Vst, cs, specs, kvqs, G, metrics=False):
                                     (jw[None, :] <= ipos[i0:i1, None] - m) & (jw[None, :] > ipos[i0:i1, None] - R))]
                   out[m - 1] = attend(qm, parts, extra).to(torch.bfloat16)
               hd[n] = f.post(layer, h.reshape(G * N, -1), out.view(G * N, -1)).view(G, N, -1)
-              del qs, ks, vs, ksr, out
+              del qs, ks, vs, ksr, out, hyb
         # ---- drafts, grouped by compressed context (computed once per group, freed after the group)
         def ctx_key(s):
-            return ("vq", s["fmt"]) if s["kind"] == "vq" else ("kivi", s["bits"], s["group"]) if s["kind"] == "kivi" else None
+            return ("vq", s["fmt"]) if s["kind"] in ("vq", "hyb") else ("kivi", s["bits"], s["group"]) if s["kind"] == "kivi" else None
         groups = {}
         for n, s in specs.items():
             groups.setdefault(ctx_key(s), []).append(n)
         for key, names in groups.items():
+            if TIMES is not None:
+                torch.cuda.synchronize(); tg = time.time()
             ctxs = {}
             if key is not None and key[0] == "vq":
                 q_ = kvqs[key[1]]
@@ -259,6 +277,8 @@ def tf_pass(f, ids_full, P, Kst, Vst, cs, specs, kvqs, G, metrics=False):
                 del kq, vq
             run_drafts(names, ctxs)
             del ctxs
+            if TIMES is not None:
+                torch.cuda.synchronize(); TIMES[str(key)] = TIMES.get(str(key), 0.0) + time.time() - tg
         ht = ht_new
         del Kx, Vx, Kpre
     if metrics:  # step-1 draft (stream 0) vs target, teacher-forced on ids_full; labels = next tokens
@@ -347,10 +367,10 @@ def main():
     f = M(model)
     specs = draft_specs(a.drafts)
     specs = {n: s for n, s in specs.items() if not (s["kind"] in ("evict", "snapkv", "topk") and s["budget"] >= a.ctx)}
-    SNAP["maxb"] = max([s["budget"] for s in specs.values() if s["kind"] == "snapkv"], default=0)
+    SNAP["maxb"] = max([s["budget"] for s in specs.values() if s["kind"] in ("snapkv", "hyb")], default=0)
     kvqs = {}
     for s in specs.values():
-        if s["kind"] == "vq" and s["fmt"] not in kvqs:
+        if s["kind"] in ("vq", "hyb") and s["fmt"] not in kvqs:
             kvqs[s["fmt"]] = make_quant(s["fmt"])
             kvqs[s["fmt"]].keep_first = 0 if (s["fmt"].startswith("cv") and s["fmt"].endswith("n")) else SINKS
     maxT = max(len(x) for v in sets.values() for x in v) + a.gen + 8
