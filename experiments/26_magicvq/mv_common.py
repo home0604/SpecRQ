@@ -45,9 +45,15 @@ CB = {  # format -> codebook file (bf16-weight KV, pile-val, chnorm, greedy RQ)
 POST = {"p", "q"}
 CB["g8"] = os.path.join(OUTROOT, "cb", "gsrq_D8C256S2.pt")    # GSRQ (VQLLM port) D8 C256 x 2: 1 bit / stage
 CB["g16"] = os.path.join(OUTROOT, "cb", "gsrq_D16C256S2.pt")  # GSRQ D16 C256 x 2: 0.5 bit / stage
+for _t, _f in (("gv8", "gsrq_D8C256S2_vn"), ("gv16", "gsrq_D16C256S2_vn"), ("gk8", "gsrq_D8C256S2_kl"),
+               ("gk16", "gsrq_D16C256S2_kl"), ("gkv8", "gsrq_D8C256S2_vn_kl"), ("gkv16", "gsrq_D16C256S2_vn_kl")):
+    CB[_t] = os.path.join(OUTROOT, "cb", _f + ".pt")  # vn: V per-token gain; kl: attention-aware trained
 
 
 def make_quant(fmt):
+    if fmt.startswith("cv"):  # CommVQ: cv1 / cv2 (official gumbel encode), cv1a / cv2a (argmax encode); suffix n: no sinks
+        from commvq_quant import CVQuant
+        return CVQuant(int(fmt[2]), "argmax" if "a" in fmt[3:] else "gumbel")
     if fmt.startswith("g"):
         from gsrq import GSQuant
         return GSQuant(CB[fmt])
@@ -82,9 +88,13 @@ def draft_specs(names):
             b, _, g = base[4:].partition("g")
             out[n] = {"kind": "kivi", "bits": int(b), "group": int(g) if g else 128, "R": int(r) if r else 0}
         elif n.startswith("vq"):
-            base, _, r = n.partition("+r")
-            fmt, lev = base[2:].split("L")
-            out[n] = {"kind": "vq", "fmt": fmt, "level": int(lev), "R": int(r) if r else 0}
+            import re
+            m = re.fullmatch(r"vq([a-z0-9_]+?)(?:L(\d)|K(\d)V(\d))(?:\+r(\d+))?", n)
+            assert m, n
+            fmt = m.group(1)
+            lk, lv = (int(m.group(2)),) * 2 if m.group(2) else (int(m.group(3)), int(m.group(4)))
+            out[n] = {"kind": "vq", "fmt": fmt, "level": max(lk, lv), "lk": lk, "lv": lv,
+                      "R": int(m.group(5)) if m.group(5) else 0}  # level 0 on a side = that side kept bf16
         else:
             raise ValueError(n)
     return out
@@ -101,7 +111,11 @@ def kv_tokens_equiv(spec, kvqs, ctx):
     if spec["kind"] == "exact":
         return ctx
     R = spec.get("R", 0)
-    cbt = cb_bytes(kvqs[spec["fmt"]], spec["level"]) / BF16_TOKEN_BYTES if spec["kind"] == "vq" else 0.0
+    cbt = 0.0
+    if spec["kind"] == "vq":
+        q = kvqs[spec["fmt"]]
+        cbt = (q.cb_bytes() if hasattr(q, "cb_bytes") else
+               (cb_bytes(q, spec["lk"]) + cb_bytes(q, spec["lv"])) / 2) / BF16_TOKEN_BYTES
     return (ctx - SINKS - R) * bits_of(spec, kvqs) / 16 + SINKS + R + cbt
 
 
@@ -120,9 +134,17 @@ def cb_bytes(q, level):
 
 
 def bits_of(spec, kvqs):
+    """bits / element averaged over K and V (a side at level 0 counts 16)."""
     if spec["kind"] == "vq":
         q = kvqs[spec["fmt"]]
-        return sum(math.log2(c) for c in q.sizes[:spec["level"]]) / q.d
+        if hasattr(q, "bits_k"):  # CommVQ: fixed rate per side
+            bk, bv = q.bits_k(), q.bits_v()
+        else:
+            bk = sum(math.log2(c) for c in q.sizes[:spec["lk"]]) / q.d
+            bv = sum(math.log2(c) for c in q.sizes[:spec["lv"]]) / q.d + (16 / 128 if getattr(q, "vnorm", False) else 0)
+        bk = bk if spec["lk"] else 16.0
+        bv = bv if spec["lv"] else 16.0
+        return (bk + bv) / 2
     if spec["kind"] == "kivi":
         return spec["bits"] + 32 / spec["group"]  # fp16 scale + zero per group
     return 16.0

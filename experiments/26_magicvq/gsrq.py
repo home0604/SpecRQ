@@ -96,7 +96,7 @@ def gain_from(proj, lab, C, old):
 
 
 @torch.no_grad()
-def gs_encode(X, S, g, chunk=4096):
+def gs_encode(X, S, g, chunk=1024):
     """X [P, N, D] fp32, S [P, C, D], g [P, C] -> codes [P, N], recon [P, N, D] (argmax 2 g x.s - g^2)."""
     Sf, gf = S.float(), g.float()
     codes = torch.empty(X.shape[:2], dtype=torch.long, device=X.device)
@@ -119,6 +119,7 @@ class GSQuant:
         self.S = st["stages"]
         self.cb = [[[(s.to(dev), g.to(dev)) for s, g in st["cb"][l][kv]] for kv in range(2)] for l in range(len(st["cb"]))]
         self.keep_first = 0
+        self.vnorm = bool(st.get("vnorm", False))  # V: per-(token, kv-head) L2 gain (fp16) + VQ of the unit vector
         self.meta = {k: v for k, v in st.items() if k != "cb"}
 
     def quant_pos(self, l, kv, x, levels, p0):
@@ -133,6 +134,10 @@ class GSQuant:
     def quant(self, l, kv, x, levels):
         B, T, H, Dh = x.shape
         xf = x.float()
+        nrm = None
+        if kv == 1 and self.vnorm:
+            nrm = xf.norm(dim=-1, keepdim=True).half().float().clamp(min=1e-6)
+            xf = xf / nrm
         if kv == 0:
             xf = to_meta(xf)
         X = xf.reshape(B * T, H * Dh // self.d, self.d).transpose(0, 1).contiguous()  # [P, N, D]
@@ -147,6 +152,8 @@ class GSQuant:
                 y = acc.transpose(0, 1).reshape(B, T, H, Dh)
                 if kv == 0:
                     y = from_meta(y)
+                if nrm is not None:
+                    y = y * nrm
                 out[s + 1] = y.to(x.dtype)
         return out
 
@@ -160,6 +167,7 @@ def main():
     ap.add_argument("--seqlen", type=int, default=4096)
     ap.add_argument("--train_tokens", type=int, default=24576)
     ap.add_argument("--heldout_tokens", type=int, default=4096)
+    ap.add_argument("--vnorm", action="store_true", help="V: per-(token, kv-head) L2 gain, VQ of the unit vector")
     a = ap.parse_args()
     t0 = time.time()
     from calib_kv import collect  # kvtau (read-only): pile_val nsamples x seqlen, bf16 forward, pre-RoPE K + V
@@ -178,6 +186,8 @@ def main():
         for kv, T in enumerate((Ks[l], Vs[l])):
             def prep(sel):
                 x = T[sel].cuda().float()
+                if kv == 1 and a.vnorm:
+                    x = x / x.norm(dim=-1, keepdim=True).clamp(min=1e-6)
                 if kv == 0:
                     x = to_meta(x)
                 return x.reshape(x.shape[0], -1, D).transpose(0, 1).contiguous()  # [P, N, D]
@@ -192,14 +202,19 @@ def main():
                 r = r - rec
                 _, rech = gs_encode(rh, S, g)
                 rh = rh - rech
-                mse.append((rh ** 2).sum().item() / (Xho ** 2).sum().item())
+                if kv == 1 and a.vnorm:  # error in the original V units: unit-vector error x per-token norm
+                    nr = T[ho].cuda().float().norm(dim=-1)  # [N, H]
+                    w = nr.repeat_interleave(128 // D, 1).t()[..., None]  # [P, N, 1]
+                    mse.append(((rh * w) ** 2).sum().item() / ((Xho * w) ** 2).sum().item())
+                else:
+                    mse.append((rh ** 2).sum().item() / (Xho ** 2).sum().item())
             row.append(st)
             rep.append({"layer": l, "kv": "KV"[kv], "rel_mse_heldout": mse, "em_iters": its})
         cbs.append(row)
         if l % 4 == 0:
             print(l, rep[-2:], f"{time.time() - t0:.0f}s", flush=True)
-    tag = f"gsrq_D{D}C{a.C}S{a.stages}"
-    torch.save({"D": D, "C": a.C, "stages": a.stages, "layout": "meta(K)", "method": "GSRQ (VQLLM port, SubVec1)",
+    tag = f"gsrq_D{D}C{a.C}S{a.stages}" + ("_vn" if a.vnorm else "")
+    torch.save({"D": D, "C": a.C, "stages": a.stages, "layout": "meta(K)", "method": "GSRQ (VQLLM port, SubVec1)", "vnorm": a.vnorm,
                 "cb": cbs}, os.path.join(OUT, f"{tag}.pt"))
     summ = {kvn: [sum(x["rel_mse_heldout"][s] for x in rep if x["kv"] == kvn) / len(Ks) for s in range(a.stages)]
             for kvn in "KV"}

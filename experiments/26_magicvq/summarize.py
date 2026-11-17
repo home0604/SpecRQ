@@ -32,7 +32,9 @@ FAMILY_LABEL = {
     "kivi": "KIVI (g32)", "kivi+res": "KIVI (g32) + bf16 residual", "kivi128": "KIVI-like g128",
     "gsrq": "GSRQ (VQLLM port)", "gsrq+win": "GSRQ + bf16 window", "rq": "plain RQ ours (pre-RoPE, cn)",
     "rq+win": "plain RQ ours + bf16 window", "rqpost": "plain RQ ours post-RoPE", "rqpost+win": "plain RQ post + window",
-    "exact": "exact (full bf16 KV)"}
+    "exact": "exact (full bf16 KV)", "commvq": "CommVQ (official codebooks)", "commvq+win": "CommVQ + bf16 window",
+    "gsrq-kl": "GSRQ attn-trained", "gsrq-kl+win": "GSRQ attn-trained + window", "gsrq-vn": "GSRQ V-gain",
+    "gsrq-vn+win": "GSRQ V-gain + window", "gsrq-kv": "GSRQ K/V split (diag)", "rq-kv": "RQ K/V split (diag)"}
 
 
 def parse(n):
@@ -49,8 +51,10 @@ def parse(n):
     if n.startswith("kivi"):
         b, _, g = base[4:].partition("g")
         return {"kind": "kivi", "bits": int(b), "group": int(g) if g else 128, "R": R}
-    fmt, lev = base[2:].split("L")
-    return {"kind": "vq", "fmt": fmt, "level": int(lev), "R": R}
+    import re
+    m = re.fullmatch(r"vq([a-z0-9_]+?)(?:L(\d)|K(\d)V(\d))", base)
+    lk, lv = (int(m.group(2)),) * 2 if m.group(2) else (int(m.group(3)), int(m.group(4)))
+    return {"kind": "vq", "fmt": m.group(1), "level": max(lk, lv), "lk": lk, "lv": lv, "R": R}
 
 
 def family(n):
@@ -61,7 +65,10 @@ def family(n):
     if k == "kivi":
         return ("kivi128" if s["group"] == 128 else "kivi+res" if s["R"] else "kivi")
     f = s["fmt"]
-    base = "gsrq" if f.startswith("g") else "rqpost" if f in ("p", "q") else "rq"
+    if s["lk"] != s["lv"]:
+        return "gsrq-kv" if f.startswith("g") else "rq-kv"  # K / V attribution or mixed bits (diagnostic)
+    base = ("commvq" if f.startswith("cv") else "gsrq-kl" if f.startswith("gk") else "gsrq-vn" if f.startswith("gv")
+            else "gsrq" if f.startswith("g") else "rqpost" if f in ("p", "q") else "rq")
     return base + ("+win" if s["R"] else "")
 
 
@@ -71,13 +78,20 @@ def series(n):
     if s["kind"] == "kivi":
         return f"{f} {s['bits']}b" if s["R"] else f
     if s["kind"] == "vq":
+        if s["lk"] != s["lv"]:
+            return f"{f} {s['fmt']} K{s['lk']}V{s['lv']}"
         return f"{f} {s['fmt']}L{s['level']}" if s["R"] else f"{f} {s['fmt']}"
     return f
+
+
+CFG = {"bits": {}, "tok": {}}  # per-draft values recorded by tau_eval (used for formats without static entries)
 
 
 def bits(n):
     s = parse(n)
     if s["kind"] == "vq":
+        if s["fmt"] not in FMT_BITS or s["lk"] != s["lv"]:
+            return CFG["bits"][n]
         return FMT_BITS[s["fmt"]] * s["level"]
     if s["kind"] == "kivi":
         return s["bits"] + 32 / s["group"]
@@ -91,6 +105,8 @@ def tok_eq(n, ctx):
     if s["kind"] in ("evict", "snapkv", "topk"):
         return min(s["budget"], ctx)
     R = s["R"]
+    if s["kind"] == "vq" and (s["fmt"] not in CB_TOK or s["lk"] != s["lv"]):
+        return CFG["tok"][(n, ctx)]
     cb = CB_TOK[s["fmt"]] * s["level"] if s["kind"] == "vq" else 0
     return (ctx - SINKS - R) * bits(n) / 16 + SINKS + R + cb
 
@@ -169,6 +185,8 @@ def main():
             if not os.path.exists(p):
                 continue
             T = json.load(open(p))
+            CFG["bits"].update(T["config"]["bits"])
+            CFG["tok"].update({(n, c): v for n, v in T["config"]["kv_tokens_equiv"].items()})
             for sname, A in T["agg"].items():
                 d = tau.setdefault(sname, {}).setdefault(c, {})
                 meta.setdefault(sname, {}).setdefault(c, {})[run] = {k: A[k] for k in ("n_prompts", "mean_N",
@@ -182,6 +200,8 @@ def main():
             p = os.path.join(ROOT, "tau", f"qual_{run}_ctx{c}.json")
             if os.path.exists(p):
                 Q = json.load(open(p))
+                CFG["bits"].update(Q["config"]["bits"])
+                CFG["tok"].update({(n, c): v for n, v in Q["config"]["kv_tokens_equiv"].items()})
                 for n, v in Q["agg"].items():
                     qual.setdefault(c, {}).setdefault(n, {"run": run, **v})
     out = {"tau": {}, "quality": {}, "speedup": {}, "pareto": {}, "meta": meta}
@@ -266,6 +286,9 @@ def main():
     open(base + "_tables.md", "w").write(txt + "\n")
     if a.plots:
         out["plots"] = plots(out, base, a.set)
+        if "chat" in out["tau"]:
+            out["plots"] += plots(out, base, "chat", "_chat", (("tau_g2", "tau (gamma=2)"), ("tau_g4", "tau (gamma=4)")),
+                                  speed=False)
     if a.save:
         sys.path.insert(0, REPO)
         from tools.results import save_result
@@ -287,22 +310,23 @@ def figlegend(fig, axs):
     fig.tight_layout()
 
 
-def plots(out, base, sname):
+def plots(out, base, sname, suffix="", ykeys=None, speed=True):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     fams = list(FAMILY_LABEL)
     cmap = plt.get_cmap("tab20")
     col = {f: cmap(i % 20) for i, f in enumerate(fams)}
-    mk = {f: m for f, m in zip(fams, "ovs^Dx*P<>hH8dp")}
+    mks = "ovs^Dx*P<>hH8dp1234+X|_"
+    mk = {f: mks[i % len(mks)] for i, f in enumerate(fams)}
     files = []
     ctxs = sorted(out["tau"].get(sname, {}))
     # (1) tau / quality vs bytes
-    for ykey, ylab in (("tau_g2", "tau (gamma=2)"), ("tau_g4", "tau (gamma=4)"), ("tv", "TV(target, draft)"),
-                       ("top1", "top-1 agreement")):
+    for ykey, ylab in (ykeys or (("tau_g2", "tau (gamma=2)"), ("tau_g4", "tau (gamma=4)"),
+                                  ("tv", "TV(target, draft)"), ("top1", "top-1 agreement"))):
         fig, axs = plt.subplots(1, len(ctxs), figsize=(5 * len(ctxs), 4.2), squeeze=False)
         for ax, c in zip(axs[0], ctxs):
-            rows = [r for r in out["tau"][sname][c] if r.get(ykey) is not None and r["family"] != "exact"]
+            rows = [r for r in out["tau"][sname][c] if r.get(ykey) is not None and r["family"] not in ("exact", "gsrq-kv")]
             for sr in sorted({series(r["draft"]) for r in rows}):
                 rr = sorted([r for r in rows if series(r["draft"]) == sr], key=lambda r: r["kv_frac"])
                 f = rr[0]["family"]
@@ -319,14 +343,15 @@ def plots(out, base, sname):
             ax.set_ylabel(ylab)
             ax.grid(alpha=0.3)
         figlegend(fig, axs)
-        fig.suptitle(f"Llama-3.1-8B-Instruct self-spec drafts, PG-19: {ylab} vs draft KV bytes")
-        fn = f"{base}_{ykey}_vs_bytes.png"
+        fig.suptitle(f"Llama-3.1-8B-Instruct self-spec drafts, {sname}: {ylab} vs draft KV bytes "
+                     f"(K/V-split diagnostics omitted; see table)", y=1.03)
+        fn = f"{base}{suffix}_{ykey}_vs_bytes.png"
         fig.savefig(fn, dpi=130, bbox_inches="tight")
         plt.close(fig)
         files.append(fn)
     # (2) tau vs c and (3) speedup vs bytes, per (B, ctx)
     keys = list(out["speedup"])
-    if keys:
+    if keys and speed:
         for xkey, ykey, xl, yl, logx, tag in (("c", "tau_g4", "measured T_draft / T_target", "tau (gamma=4)", False,
                                                "tau_vs_c"),
                                               ("kv_frac", "speedup", "draft KV bytes / full bf16 KV (B=1)",

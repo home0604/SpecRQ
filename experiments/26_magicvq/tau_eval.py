@@ -171,12 +171,14 @@ def tf_pass(f, ids_full, P, Kst, Vst, cs, specs, kvqs, G, metrics=False):
               ksr = rope(ks, cos[None, P:P + N].expand(G, -1, -1), sin[None, P:P + N].expand(G, -1, -1))
               if s["kind"] == "vq" and s["R"] == 0:  # own in-round KV stored VQ-encoded
                   q_ = kvqs[s["fmt"]]
-                  if s["fmt"] in POST:
-                      ksr = q_.quant(l, 0, ksr, [s["level"]])[s["level"]]
-                  else:
-                      ksr = rope(q_.quant(l, 0, ks, [s["level"]])[s["level"]], cos[None, P:P + N].expand(G, -1, -1),
+                  lk, lv = s["lk"], s["lv"]
+                  if lk and s["fmt"] in POST:
+                      ksr = q_.quant(l, 0, ksr, [lk])[lk]
+                  elif lk:
+                      ksr = rope(q_.quant(l, 0, ks, [lk])[lk], cos[None, P:P + N].expand(G, -1, -1),
                                  sin[None, P:P + N].expand(G, -1, -1))
-                  vs = q_.quant(l, 1, vs, [s["level"]])[s["level"]]
+                  if lv:
+                      vs = q_.quant(l, 1, vs, [lv])[lv]
               out = torch.empty(G, N, f.H, f.D, device=dev, dtype=torch.bfloat16)
               for m in range(1, G + 1):
                   qm = rp(qs[m - 1].float(), cos[P:P + N], sin[P:P + N]) * scale
@@ -210,7 +212,8 @@ def tf_pass(f, ids_full, P, Kst, Vst, cs, specs, kvqs, G, metrics=False):
                                 lambda i0, i1, jw=jw, m=m, W=W: (jw[None, :] <= ipos[i0:i1, None] - m)
                                 & (jw[None, :] > ipos[i0:i1, None] - W))]
                   elif s["kind"] in ("vq", "kivi"):
-                      Kc, Vc = ctxs[(s["fmt"], s["level"])] if s["kind"] == "vq" else ctxs[("kivi", s["bits"], s["group"])]
+                      Kc, Vc = ((ctxs[(s["fmt"], "K", s["lk"])], ctxs[(s["fmt"], "V", s["lv"])]) if s["kind"] == "vq"
+                                else ctxs[("kivi", s["bits"], s["group"])])
                       R = s.get("R", 0)
                       if R == 0:
                           parts = [(Kc, Vc, m_le(m))]
@@ -234,13 +237,20 @@ def tf_pass(f, ids_full, P, Kst, Vst, cs, specs, kvqs, G, metrics=False):
             ctxs = {}
             if key is not None and key[0] == "vq":
                 q_ = kvqs[key[1]]
-                lvs = sorted({specs[n]["level"] for n in names})
+                lks = sorted({specs[n]["lk"] for n in names} - {0})
+                lvs = sorted({specs[n]["lv"] for n in names} - {0})
                 post = key[1] in POST
-                rk = q_.quant_pos(l, 0, (Kx if post else Kpre)[None], lvs, 0)
-                rv = q_.quant_pos(l, 1, Vx[None], lvs, 0)
-                for lv in lvs:
-                    ctxs[(key[1], lv)] = (rk[lv][0] if post else rp(rk[lv][0], cos[:Tt], sin[:Tt]), rv[lv][0])
-                del rk, rv
+                ctxs[(key[1], "K", 0)], ctxs[(key[1], "V", 0)] = Kx, Vx
+                if lks:
+                    rk = q_.quant_pos(l, 0, (Kx if post else Kpre)[None], lks, 0)
+                    for lk in lks:
+                        ctxs[(key[1], "K", lk)] = rk[lk][0] if post else rp(rk[lk][0], cos[:Tt], sin[:Tt])
+                    del rk
+                if lvs:
+                    rv = q_.quant_pos(l, 1, Vx[None], lvs, 0)
+                    for lv in lvs:
+                        ctxs[(key[1], "V", lv)] = rv[lv][0]
+                    del rv
             elif key is not None:
                 b, gsz = key[1], key[2]
                 kq = kivi_fake(Kpre, b, 0, gsz); kq[:SINKS] = Kpre[:SINKS]
@@ -341,7 +351,7 @@ def main():
     for s in specs.values():
         if s["kind"] == "vq" and s["fmt"] not in kvqs:
             kvqs[s["fmt"]] = make_quant(s["fmt"])
-            kvqs[s["fmt"]].keep_first = SINKS
+            kvqs[s["fmt"]].keep_first = 0 if (s["fmt"].startswith("cv") and s["fmt"].endswith("n")) else SINKS
     maxT = max(len(x) for v in sets.values() for x in v) + a.gen + 8
     Kst = [torch.empty(maxT, f.Hkv, f.D, device="cuda", dtype=torch.bfloat16) for _ in range(f.nl)]
     Vst = [torch.empty(maxT, f.Hkv, f.D, device="cuda", dtype=torch.bfloat16) for _ in range(f.nl)]
