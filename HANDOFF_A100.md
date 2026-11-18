@@ -105,6 +105,7 @@ Steps:
 3. **τ at 64k/128k** (`tau_eval.py`, `lb_tau.py`): one 40GB GPU should fit 64k (16 GB weights + 8 GB KV + harness), run the two GPUs as two parallel τ jobs. 128k (16 GB KV) probably needs both GPUs or KV offload in the τ harness. Use `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (v6 32k τ OOMed without it on 24 GB).
 4. **Official MagicDec** (`experiments/27_magicdec_repro`): the same-hardware comparison is planned on shark's 4×4090 once GPUs 4–7 are free (env `/data/lsh/envs/magicdec` there). Its Table 3(c) uses 8×A100, which 2×A100 cannot match. On the A100, optionally run the official code at TP=2 with small B as a second same-hardware check.
 5. **Draft-specific codebook training (v6 done, layer-local):** if more τ is needed (e.g. for 1-bit), the planned next objective is an end-to-end loss on the target's greedy token (cross-entropy or margin on top-1), not full KL. Greedy acceptance depends only on top-1 agreement.
+6. **Kernel notes (low priority):** the VQ draft attention is LUT-based (q·codebook table, then gather over codes). At B16×32k TP4 it reads ~67 MB/layer/rank in ~80 µs (~0.84 TB/s, ~85% of 4090 peak) and is ~20% of the hybrid draft step, so INT8 tensor cores / INT8 codebooks would not help. Only fewer code bits (1-bit) cut its time; an INT8/FP8 LUT (fast-scan style) might give ≤10–15% of the kernel (≈1–3% end-to-end). On A100 (1.5 TB/s) re-check the bandwidth fraction.
 
 ## Working rules carried over (from the user)
 
