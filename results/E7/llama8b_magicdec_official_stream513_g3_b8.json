@@ -1,0 +1,187 @@
+{
+ "exp": "E7",
+ "run": "llama8b_magicdec_official_stream513_g3_b8",
+ "time": "2026-11-18T17:20:21",
+ "commit": "5e5659d",
+ "dirty_files": 9,
+ "host": "shark",
+ "cuda_visible_devices": "4,5,6,7",
+ "tmux_job": "sr-magicdec_off_main",
+ "versions": {
+  "torch": "2.5.1+cu121",
+  "transformers": "4.36.2",
+  "triton": "3.1.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "model": "Llama-3.1-8B-Instruct (bf16, /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth)",
+  "setting": "official MagicDec self-spec StreamingLLM, PG-19 (official loader), TP=4 RTX 4090 GPUs 4-7",
+  "code": "github.com/Infini-AI-Lab/MagicDec @ 09cd671c01bc87f7570d3243c46200a96f0fc0b4 (unmodified)",
+  "env": "/data/lsh/envs/magicdec25: torch 2.5.1+cu121, flashinfer 0.1.6+cu121torch2.4 wheel, transformers 4.36.2 (torch 2.4 env fails --compile: torch._functorch.config.enable_autograd_cache missing)",
+  "kind": "StreamingLLM",
+  "B": 8,
+  "T": 32672,
+  "gamma": 3,
+  "draft_budget": 513,
+  "args": "--model /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth --model_name /data/models/llama3.1_8b_instruct --rank_group 0 1 2 3 --prefix_len 32672 --max_len 32768 --compile --B 8 --gamma 3 --draft_budget 513 --benchmark",
+  "script": "tests/StreamingLLM/selfspec_benchmark.py"
+ },
+ "metrics": {
+  "tag": "stream513_g3_b8",
+  "script": "tests/StreamingLLM/selfspec_benchmark.py",
+  "args": "--model /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth --model_name /data/models/llama3.1_8b_instruct --rank_group 0 1 2 3 --prefix_len 32672 --max_len 32768 --compile --B 8 --gamma 3 --draft_budget 513 --benchmark",
+  "rc": 0,
+  "wall_s": 979,
+  "final_tok_per_s": 567.935546875,
+  "B": 8,
+  "prefix_len": 32672,
+  "max_len": 32768,
+  "gamma": 3,
+  "draft_budget": 513,
+  "cotenant_before": false,
+  "cotenant_after": false,
+  "co_before": {
+   "time": "2026-11-18T17:04:01",
+   "cotenant": false,
+   "others": [],
+   "gpus": [
+    "0, 4929 MiB, 90 %",
+    "1, 0 MiB, 0 %",
+    "2, 0 MiB, 0 %",
+    "3, 0 MiB, 0 %",
+    "4, 0 MiB, 0 %",
+    "5, 0 MiB, 0 %",
+    "6, 0 MiB, 0 %",
+    "7, 0 MiB, 0 %"
+   ]
+  },
+  "co_after": {
+   "time": "2026-11-18T17:20:21",
+   "cotenant": false,
+   "others": [],
+   "gpus": [
+    "0, 3604 MiB, 16 %",
+    "1, 0 MiB, 0 %",
+    "2, 0 MiB, 0 %",
+    "3, 0 MiB, 0 %",
+    "4, 0 MiB, 0 %",
+    "5, 0 MiB, 0 %",
+    "6, 0 MiB, 0 %",
+    "7, 0 MiB, 0 %"
+   ]
+  },
+  "omega": 3.0145835876464844,
+  "round_ms": 42.46375,
+  "verify_ms": 19.369999999999997,
+  "draft_ms": 22.259999999999998,
+  "accept_loop_ms": 0.8200744787851969,
+  "gen_tokens": 2894.0,
+  "verify_steps": 120,
+  "gen_per_seq": 72.35,
+  "tok_per_s_cum": 567.9353958768754,
+  "warmup_batches": [
+   {
+    "total_s": 224.20916,
+    "gen": 555.0,
+    "steps": 23,
+    "omega": 3.0163044929504395
+   },
+   {
+    "total_s": 14.15615,
+    "gen": 565.0,
+    "steps": 22,
+    "omega": 3.2102272510528564
+   },
+   {
+    "total_s": 2.27332,
+    "gen": 566.0,
+    "steps": 24,
+    "omega": 2.9479167461395264
+   },
+   {
+    "total_s": 0.97282,
+    "gen": 573.0,
+    "steps": 23,
+    "omega": 3.1141304969787598
+   },
+   {
+    "total_s": 0.97315,
+    "gen": 584.0,
+    "steps": 23,
+    "omega": 3.17391300201416
+   }
+  ],
+  "per_batch": [
+   {
+    "total_s": 1.06293,
+    "gen": 595.0,
+    "steps": 25,
+    "target_s": 0.485,
+    "draft_s": 0.557,
+    "loop_s": 0.020730257034301758,
+    "omega": 2.975,
+    "tok_per_s": 559.7734563894142,
+    "round_ms": 42.517199999999995
+   },
+   {
+    "total_s": 0.9753499999999999,
+    "gen": 555.0,
+    "steps": 23,
+    "target_s": 0.44475999999999993,
+    "draft_s": 0.511,
+    "loop_s": 0.019042491912841797,
+    "omega": 3.016304347826087,
+    "tok_per_s": 569.0265033065054,
+    "round_ms": 42.40652173913043
+   },
+   {
+    "total_s": 1.05925,
+    "gen": 603.0,
+    "steps": 25,
+    "target_s": 0.48424999999999985,
+    "draft_s": 0.5555199999999998,
+    "loop_s": 0.01977849006652832,
+    "omega": 3.015,
+    "tok_per_s": 569.2707104083078,
+    "round_ms": 42.37
+   },
+   {
+    "total_s": 0.9798900000000001,
+    "gen": 561.0,
+    "steps": 23,
+    "target_s": 0.44647000000000037,
+    "draft_s": 0.5134399999999999,
+    "loop_s": 0.019362449645996094,
+    "omega": 3.0489130434782608,
+    "tok_per_s": 572.5132412821846,
+    "round_ms": 42.603913043478265
+   },
+   {
+    "total_s": 1.01823,
+    "gen": 580.0,
+    "steps": 24,
+    "target_s": 0.46391999999999967,
+    "draft_s": 0.53424,
+    "loop_s": 0.019495248794555664,
+    "omega": 3.0208333333333335,
+    "tok_per_s": 569.6159021046326,
+    "round_ms": 42.42625
+   }
+  ],
+  "tok_per_s_batch": {
+   "median": 569.2707104083078,
+   "min": 559.7734563894142,
+   "max": 572.5132412821846
+  },
+  "omega_batch": {
+   "median": 3.016304347826087,
+   "min": 2.975,
+   "max": 3.0489130434782608
+  }
+ },
+ "notes": ""
+}

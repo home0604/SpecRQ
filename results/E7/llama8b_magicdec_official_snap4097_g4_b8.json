@@ -1,0 +1,187 @@
+{
+ "exp": "E7",
+ "run": "llama8b_magicdec_official_snap4097_g4_b8",
+ "time": "2026-11-18T17:03:45",
+ "commit": "5e5659d",
+ "dirty_files": 8,
+ "host": "shark",
+ "cuda_visible_devices": "4,5,6,7",
+ "tmux_job": "sr-magicdec_off_main",
+ "versions": {
+  "torch": "2.5.1+cu121",
+  "transformers": "4.36.2",
+  "triton": "3.1.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "model": "Llama-3.1-8B-Instruct (bf16, /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth)",
+  "setting": "official MagicDec self-spec SnapKV, PG-19 (official loader), TP=4 RTX 4090 GPUs 4-7",
+  "code": "github.com/Infini-AI-Lab/MagicDec @ 09cd671c01bc87f7570d3243c46200a96f0fc0b4 (unmodified)",
+  "env": "/data/lsh/envs/magicdec25: torch 2.5.1+cu121, flashinfer 0.1.6+cu121torch2.4 wheel, transformers 4.36.2 (torch 2.4 env fails --compile: torch._functorch.config.enable_autograd_cache missing)",
+  "kind": "SnapKV",
+  "B": 8,
+  "T": 32672,
+  "gamma": 4,
+  "draft_budget": 4097,
+  "args": "--model /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth --model_name /data/models/llama3.1_8b_instruct --rank_group 0 1 2 3 --prefix_len 32672 --max_len 32768 --compile --B 8 --gamma 4 --draft_budget 4097 --benchmark",
+  "script": "tests/SnapKV/selfspec_benchmark.py"
+ },
+ "metrics": {
+  "tag": "snap4097_g4_b8",
+  "script": "tests/SnapKV/selfspec_benchmark.py",
+  "args": "--model /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth --model_name /data/models/llama3.1_8b_instruct --rank_group 0 1 2 3 --prefix_len 32672 --max_len 32768 --compile --B 8 --gamma 4 --draft_budget 4097 --benchmark",
+  "rc": 0,
+  "wall_s": 627,
+  "final_tok_per_s": 650.876708984375,
+  "B": 8,
+  "prefix_len": 32672,
+  "max_len": 32768,
+  "gamma": 4,
+  "draft_budget": 4097,
+  "cotenant_before": false,
+  "cotenant_after": false,
+  "co_before": {
+   "time": "2026-11-18T16:53:17",
+   "cotenant": false,
+   "others": [],
+   "gpus": [
+    "0, 4905 MiB, 30 %",
+    "1, 0 MiB, 0 %",
+    "2, 0 MiB, 0 %",
+    "3, 0 MiB, 0 %",
+    "4, 0 MiB, 0 %",
+    "5, 0 MiB, 0 %",
+    "6, 0 MiB, 0 %",
+    "7, 0 MiB, 0 %"
+   ]
+  },
+  "co_after": {
+   "time": "2026-11-18T17:03:44",
+   "cotenant": false,
+   "others": [],
+   "gpus": [
+    "0, 4909 MiB, 94 %",
+    "1, 0 MiB, 0 %",
+    "2, 0 MiB, 0 %",
+    "3, 0 MiB, 0 %",
+    "4, 0 MiB, 0 %",
+    "5, 0 MiB, 0 %",
+    "6, 0 MiB, 0 %",
+    "7, 0 MiB, 0 %"
+   ]
+  },
+  "omega": 4.410294055938721,
+  "round_ms": 54.20741176470588,
+  "verify_ms": 20.84,
+  "draft_ms": 32.71,
+  "accept_loop_ms": 0.644526762120864,
+  "gen_tokens": 2999.0,
+  "verify_steps": 85,
+  "gen_per_seq": 74.975,
+  "tok_per_s_cum": 650.8769150300697,
+  "warmup_batches": [
+   {
+    "total_s": 190.01852,
+    "gen": 595.0,
+    "steps": 16,
+    "omega": 4.6484375
+   },
+   {
+    "total_s": 37.1782,
+    "gen": 575.0,
+    "steps": 16,
+    "omega": 4.4921875
+   },
+   {
+    "total_s": 1.94397,
+    "gen": 589.0,
+    "steps": 17,
+    "omega": 4.330882549285889
+   },
+   {
+    "total_s": 0.91696,
+    "gen": 604.0,
+    "steps": 17,
+    "omega": 4.441176414489746
+   },
+   {
+    "total_s": 0.92036,
+    "gen": 602.0,
+    "steps": 17,
+    "omega": 4.426470756530762
+   }
+  ],
+  "per_batch": [
+   {
+    "total_s": 0.9194,
+    "gen": 596.0,
+    "steps": 17,
+    "target_s": 0.35377,
+    "draft_s": 0.55471,
+    "loop_s": 0.01073312759399414,
+    "omega": 4.382352941176471,
+    "tok_per_s": 648.2488579508375,
+    "round_ms": 54.08235294117647
+   },
+   {
+    "total_s": 0.92404,
+    "gen": 608.0,
+    "steps": 17,
+    "target_s": 0.35581,
+    "draft_s": 0.5567499999999999,
+    "loop_s": 0.011548995971679688,
+    "omega": 4.470588235294118,
+    "tok_per_s": 657.9801740184408,
+    "round_ms": 54.355294117647055
+   },
+   {
+    "total_s": 0.91537,
+    "gen": 605.0,
+    "steps": 17,
+    "target_s": 0.35224,
+    "draft_s": 0.5521600000000002,
+    "loop_s": 0.010601282119750977,
+    "omega": 4.448529411764706,
+    "tok_per_s": 660.9349224903591,
+    "round_ms": 53.84529411764706
+   },
+   {
+    "total_s": 0.9187400000000001,
+    "gen": 572.0,
+    "steps": 17,
+    "target_s": 0.35394000000000014,
+    "draft_s": 0.55386,
+    "loop_s": 0.010953664779663086,
+    "omega": 4.205882352941177,
+    "tok_per_s": 622.5918105231077,
+    "round_ms": 54.043529411764716
+   },
+   {
+    "total_s": 0.9300800000000002,
+    "gen": 618.0,
+    "steps": 17,
+    "target_s": 0.35563999999999996,
+    "draft_s": 0.5628700000000002,
+    "loop_s": 0.010947704315185547,
+    "omega": 4.544117647058823,
+    "tok_per_s": 664.4589712712883,
+    "round_ms": 54.71058823529413
+   }
+  ],
+  "tok_per_s_batch": {
+   "median": 657.9801740184408,
+   "min": 622.5918105231077,
+   "max": 664.4589712712883
+  },
+  "omega_batch": {
+   "median": 4.448529411764706,
+   "min": 4.205882352941177,
+   "max": 4.544117647058823
+  }
+ },
+ "notes": ""
+}

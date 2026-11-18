@@ -1,0 +1,93 @@
+{
+ "exp": "E7",
+ "run": "llama8b_magicdec_official_ar_b16",
+ "time": "2026-11-18T17:35:30",
+ "commit": "5e5659d",
+ "dirty_files": 10,
+ "host": "shark",
+ "cuda_visible_devices": "4,5,6,7",
+ "tmux_job": "sr-magicdec_off_main",
+ "versions": {
+  "torch": "2.5.1+cu121",
+  "transformers": "4.36.2",
+  "triton": "3.1.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "model": "Llama-3.1-8B-Instruct (bf16, /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth)",
+  "setting": "official MagicDec self-spec AR, PG-19 (official loader), TP=4 RTX 4090 GPUs 4-7",
+  "code": "github.com/Infini-AI-Lab/MagicDec @ 09cd671c01bc87f7570d3243c46200a96f0fc0b4 (unmodified)",
+  "env": "/data/lsh/envs/magicdec25: torch 2.5.1+cu121, flashinfer 0.1.6+cu121torch2.4 wheel, transformers 4.36.2 (torch 2.4 env fails --compile: torch._functorch.config.enable_autograd_cache missing)",
+  "kind": "AR",
+  "B": 16,
+  "T": 32672,
+  "gamma": null,
+  "draft_budget": null,
+  "args": "--model /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth --model_name /data/models/llama3.1_8b_instruct --rank_group 0 1 2 3 --prefix_len 32672 --max_len 32768 --compile --B 16",
+  "script": "tests/baseline_benchmark.py"
+ },
+ "metrics": {
+  "tag": "ar_b16",
+  "script": "tests/baseline_benchmark.py",
+  "args": "--model /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth --model_name /data/models/llama3.1_8b_instruct --rank_group 0 1 2 3 --prefix_len 32672 --max_len 32768 --compile --B 16",
+  "rc": 0,
+  "wall_s": 897,
+  "final_tok_per_s": 617.0335178693974,
+  "B": 16,
+  "prefix_len": 32672,
+  "max_len": 32768,
+  "gamma": null,
+  "draft_budget": null,
+  "cotenant_before": false,
+  "cotenant_after": false,
+  "co_before": {
+   "time": "2026-11-18T17:20:33",
+   "cotenant": false,
+   "others": [],
+   "gpus": [
+    "0, 3604 MiB, 33 %",
+    "1, 0 MiB, 0 %",
+    "2, 0 MiB, 0 %",
+    "3, 0 MiB, 0 %",
+    "4, 0 MiB, 0 %",
+    "5, 0 MiB, 0 %",
+    "6, 0 MiB, 0 %",
+    "7, 0 MiB, 0 %"
+   ]
+  },
+  "co_after": {
+   "time": "2026-11-18T17:35:30",
+   "cotenant": false,
+   "others": [],
+   "gpus": [
+    "0, 3604 MiB, 25 %",
+    "1, 8684 MiB, 71 %",
+    "2, 9204 MiB, 20 %",
+    "3, 9486 MiB, 11 %",
+    "4, 0 MiB, 0 %",
+    "5, 0 MiB, 0 %",
+    "6, 0 MiB, 0 %",
+    "7, 0 MiB, 0 %"
+   ]
+  },
+  "tok_per_s_cum_lines": [
+   16.267665940397844,
+   615.0074313630955,
+   618.2968142501251,
+   618.8745950271809,
+   618.8325652545672,
+   618.7416097002746,
+   617.8886268883019,
+   617.6337627888032,
+   616.5997618603109,
+   617.0335178693974
+  ],
+  "step_ms": 25.93052003924784,
+  "gen_per_seq": 95
+ },
+ "notes": ""
+}

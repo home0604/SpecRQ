@@ -21,7 +21,7 @@ OD = Path("/data/lsh/logs/magicdec")
 NUM = r"(?:tensor\()?([0-9.eE+-]+)"
 SD1 = re.compile(r"total time :([0-9.]+)s, time per iter :([0-9.]+)s, decoding step: " + NUM + r".*large model step: (\d+)")
 SD2 = re.compile(r"target time :([0-9.]+)s, draft time :([0-9.]+)s, verify loop : ([0-9.eE+-]+), avg generate len per sentence: " + NUM)
-AR = re.compile(r"^Tokens per second :([0-9.]+)")
+AR = re.compile(r"(?<!Final )Tokens per second :([0-9.]+)")
 FIN = re.compile(r"Final tokens per second :" + NUM)
 
 
@@ -88,7 +88,7 @@ if __name__ == "__main__":
         cfg = {"model": "Llama-3.1-8B-Instruct (bf16, /data/lsh/ckpts/magicdec/Llama-3.1-8B-Instruct/model.pth)",
                "setting": f"official MagicDec self-spec {kind}, PG-19 (official loader), TP=4 RTX 4090 GPUs 4-7",
                "code": "github.com/Infini-AI-Lab/MagicDec @ 09cd671c01bc87f7570d3243c46200a96f0fc0b4 (unmodified)",
-               "env": "/data/lsh/envs/magicdec: torch 2.4.1+cu121, flashinfer 0.1.6+cu121torch2.4, transformers 4.36.2",
+               "env": "/data/lsh/envs/magicdec25: torch 2.5.1+cu121, flashinfer 0.1.6+cu121torch2.4 wheel, transformers 4.36.2 (torch 2.4 env fails --compile: torch._functorch.config.enable_autograd_cache missing)",
                "kind": kind, "B": r["B"], "T": r["prefix_len"], "gamma": r["gamma"], "draft_budget": r["draft_budget"],
                "args": r["args"], "script": r["script"]}
         print(save_result("E7", f"llama8b_magicdec_official_{a.tag}", cfg, r,
