@@ -1,0 +1,30 @@
+{
+ "args": {
+  "B": 8,
+  "ctx": 32768,
+  "draft": "hyb512rq2",
+  "tau_draft": "hyb512pL2",
+  "gamma": 6,
+  "traces": "/data/lsh/results_accept/magicvq/lb/tau_v4b_syn_quote_ctx32768.json",
+  "set": "syn_quote",
+  "rounds": 60,
+  "reps": 3,
+  "tag": "v4b"
+ },
+ "spec_tok_per_s": [
+  664.0125877703355,
+  666.6357641821799,
+  666.2231900794479
+ ],
+ "ar_tok_per_s": [
+  481.9136986939961,
+  482.1595884725912,
+  482.10145482377516
+ ],
+ "speedup_e2e_median": 1.3819149131648558,
+ "tau_replayed": 6.625,
+ "cotenants_start": [],
+ "cotenants_end": [],
+ "draft_backend": "lut",
+ "target_backend": "triton"
+}

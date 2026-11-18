@@ -1,0 +1,30 @@
+{
+ "args": {
+  "B": 8,
+  "ctx": 32768,
+  "draft": "evict4096",
+  "tau_draft": "snapkv4096",
+  "gamma": 3,
+  "traces": "/data/lsh/results_accept/magicvq/lb/tau_v4b_syn_quote_ctx32768.json",
+  "set": "syn_quote",
+  "rounds": 60,
+  "reps": 3,
+  "tag": "v4b"
+ },
+ "spec_tok_per_s": [
+  623.4952289886219,
+  635.1637216325613,
+  634.1757036029876
+ ],
+ "ar_tok_per_s": [
+  481.95300920509203,
+  482.4180978500066,
+  482.3841147668572
+ ],
+ "speedup_e2e_median": 1.3146695427760786,
+ "tau_replayed": 3.575,
+ "cotenants_start": [],
+ "cotenants_end": [],
+ "draft_backend": "triton",
+ "target_backend": "triton"
+}

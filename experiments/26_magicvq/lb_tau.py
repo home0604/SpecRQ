@@ -31,6 +31,12 @@ def main():
     ap.add_argument("--drafts", nargs="+", required=True)
     ap.add_argument("--run", default="v4")
     ap.add_argument("--min_frac", type=float, default=0.75)
+    ap.add_argument("--skip_run", default=None, help="v4b: skip candidate ids already used or skipped in "
+                    "tau_<skip_run>_<task>_ctx<ctx>.json (adds disjoint samples; --n counts the new ones)")
+    ap.add_argument("--dump_matches", nargs="*", default=[], help="drafts whose per-position step-m match traces are "
+                    "stored (for e2e_loop.py replay)")
+    ap.add_argument("--only_run", default=None, help="v4b: evaluate only the ids of tau_<only_run>_<task>_ctx<ctx>.json "
+                    "(e.g. a draft missing from that run, on the same samples)")
     a = ap.parse_args()
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
@@ -68,6 +74,14 @@ def main():
             if set(old["config"]["specs"]) == set(specs):
                 res["per_prompt"], res["skipped"] = old["per_prompt"], old["skipped"]
         done = {r["id"] for r in res["per_prompt"]} | {r["id"] for r in res["skipped"]}
+        only = None
+        for flag, rn in (("skip", a.skip_run), ("only", a.only_run)):
+            if rn:
+                ref = json.load(open(os.path.join(out_dir, f"tau_{rn}_{task}_ctx{a.ctx}.json")))
+                if flag == "skip":
+                    done |= {r["id"] for r in ref["per_prompt"]} | {r["id"] for r in ref["skipped"]}
+                else:
+                    only = {r["id"]: r["text"] for r in ref["per_prompt"]}
         if task in SYN_TASKS:
             if books is None:
                 books = load_haystack_books(tok)
@@ -79,7 +93,7 @@ def main():
         for c in cands:
             if len(res["per_prompt"]) >= a.n:
                 break
-            if c["id"] in done:
+            if c["id"] in done or (only is not None and c["id"] not in only):
                 continue
             t1 = time.time()
             ids = torch.tensor(c["ids"], device="cuda")
@@ -98,12 +112,16 @@ def main():
             tgt, preds = TE.tf_pass(f, full, P, Kst, Vst, cs, specs, kvqs, a.G)
             N = tgt.shape[0]
             pathn = torch.tensor(path[1:], device="cuda")
+            if only is not None:
+                meta["same_text_as_" + a.only_run] = text == only[c["id"]]
             rec = {"set": task, "id": c["id"], "P": P, "gen": len(path), "N": N, "meta": meta, "text": text,
                    "target_tf_vs_gen": (tgt == pathn).float().mean().item(), "group_s": TE.TIMES, "drafts": {}}
             for n, pr in preds.items():
                 mt = (pr == tgt[None])
                 matches = mt.tolist()
                 d = {"match_rate_step": mt.float().mean(1).tolist()}
+                if n in a.dump_matches:
+                    d["matches"] = [[int(x) for x in row] for row in matches]
                 for g in gammas:
                     d[f"g{g}"] = TE.walk(matches, g, N)
                 rec["drafts"][n] = d

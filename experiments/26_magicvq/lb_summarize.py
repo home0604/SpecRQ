@@ -30,9 +30,12 @@ TASK_ORDER = ["gov_report", "qmsum", "multi_news", "lcc", "repobench-p", "hotpot
 HYB_RQ = {"qL1": "rq05", "pL1": "rq1", "pL2": "rq2"}
 
 
-def tp_records():
+HYB_MEAS = {"rq2": "pL2", "rq1": "pL1", "rq05": "qL1"}  # v4b bench_tp hyb[<rq>][W] -> hyb<W><fmt>
+
+
+def tp_records(runs=("v1", "v1b")):
     TP = None
-    for run in ("v1", "v1b"):
+    for run in runs:
         X = json.load(open(f"{ROOT}/bench_tp_{run}.json"))
         if TP is None:
             TP = X
@@ -52,11 +55,16 @@ def timing_table(rec):
             out.setdefault(t, (name, fam, Td, enc, False))
     ev = rec["evict"]
     for fl, rq in HYB_RQ.items():
+        if rq not in rec.get("rq", {}) or "r512" not in rec["rq"][rq] or "512" not in ev:
+            continue
         base = rec["rq"][rq]["r512"]["full"]["us"]
         for W in (512, 1024, 2048, 4096):
             if str(W) in ev:
                 Td = base + ev[str(W)]["full"]["us"] - ev["512"]["full"]["us"]
                 out[f"hyb{W}{fl}"] = (f"est:{rq}+r512+bf16[{W}]", "hybrid", Td, None, True)
+    for rq, by in rec.get("hyb", {}).items():  # v4b: measured hybrid kernel (no per-round encode)
+        for W, x in by.items():
+            out[f"hyb{W}{HYB_MEAS[rq]}"] = (f"hyb:{rq}[{x['vq_tokens']}]+bf16[{W}]", "hybrid", x["full"]["us"], None, False)
     return out
 
 
@@ -132,24 +140,80 @@ def bootstrap(walks, rows, sname, T_AR, Tv, nb=2000, seed=0):
     return res
 
 
-def analyse(run):
-    TP = tp_records()
-    files = sorted(glob.glob(f"{LBROOT}/tau_{run}_*_ctx*.json"))
+def merged(runs, patch=(), tasks=None):
+    """(task, ctx) -> {per_prompt, skipped, kv_tokens_equiv, files}: per_prompt of all `runs` (disjoint ids, first
+    run wins), drafts of `patch` runs added to the records with the same id; only drafts present in every record."""
+    M = {}
+    for run in list(runs) + list(patch):
+        for fn in sorted(glob.glob(f"{LBROOT}/tau_{run}_*_ctx*.json")):
+            d = json.load(open(fn))
+            key = (d["config"]["task"], d["config"]["ctx"])
+            if tasks and key[0] not in tasks:
+                continue
+            if run in patch:
+                if key not in M:
+                    continue
+                byid = {r["id"]: r for r in M[key]["per_prompt"]}
+                for r in d["per_prompt"]:
+                    if r["id"] in byid:  # patch only if the target trajectory is identical (same prompt + output);
+                        # otherwise the patched draft drops out of this workload (hotpotqa_q 32k prompts are not
+                        # reproducible across processes: lb_tasks builds them from a str set -> PYTHONHASHSEED order)
+                        same = r["text"] == byid[r["id"]]["text"]
+                        byid[r["id"]].setdefault("patched_text_same", {})[run] = same
+                        if same:
+                            byid[r["id"]]["drafts"].update(r["drafts"])
+                M[key]["kv_tokens_equiv"].update(d["config"]["kv_tokens_equiv"])
+                M[key]["files"].append(fn)
+                continue
+            W = M.setdefault(key, {"per_prompt": [], "skipped": [], "kv_tokens_equiv": {}, "files": [], "n_by_run": {}})
+            have = {r["id"] for r in W["per_prompt"]}
+            new = [r for r in d["per_prompt"] if r["id"] not in have]
+            W["per_prompt"] += new
+            W["skipped"] += d["skipped"]
+            W["n_by_run"][run] = len(new)
+            for n, v in d["config"]["kv_tokens_equiv"].items():
+                W["kv_tokens_equiv"].setdefault(n, v)
+            W["files"].append(fn)
+    for W in M.values():
+        common = set.intersection(*[set(r["drafts"]) for r in W["per_prompt"]]) if W["per_prompt"] else set()
+        for r in W["per_prompt"]:
+            r["drafts"] = {n: x for n, x in r["drafts"].items() if n in common}
+    return M
+
+
+def agg_of(per, skipped):
+    names = list(per[0]["drafts"])
+    G = len(per[0]["drafts"][names[0]]["match_rate_step"])
+    agg = {"n_prompts": len(per), "n_skipped": len(skipped), "mean_P": sum(r["P"] for r in per) / len(per),
+           "mean_N": sum(r["N"] for r in per) / len(per), "drafts": {}}
+    totN = sum(r["N"] for r in per)
+    for n in names:
+        A = {"alpha_step": [sum(r["drafts"][n]["match_rate_step"][m] * r["N"] for r in per) / totN for m in range(G)]}
+        for g in range(1, G + 1):
+            A[f"tau_g{g}"] = sum(r["drafts"][n][f"g{g}"][0] for r in per) / sum(r["drafts"][n][f"g{g}"][1] for r in per)
+        agg["drafts"][n] = A
+    return agg
+
+
+def analyse(run, runs=None, patch=(), tasks=None, tp_runs=("v1", "v1b")):
+    TP = tp_records(tp_runs)
     taus = {}
-    for fn in files:
-        d = json.load(open(fn))
-        A = d.get("agg", {})
-        if not A.get("n_prompts"):
+    for (task, ctx), Mw in merged(runs or [run], patch, tasks).items():
+        per = Mw["per_prompt"]
+        if not per:
             continue
-        taus[(d["config"]["task"], d["config"]["ctx"])] = {"agg": A, "score": task_score(d["config"]["task"], d["per_prompt"]),
-                                                            "walks": [{n: {g: x[f"g{g}"][:2] for g in GAM if f"g{g}" in x}
-                                                                       for n, x in r["drafts"].items()} for r in d["per_prompt"]], "kvfrac": {n: v / d["config"]["ctx"] for n, v in
-                                                                                 d["config"]["kv_tokens_equiv"].items()},
-                                                            "file": fn}
-    out = {"run": run, "workloads": {}}
+        A = agg_of(per, Mw["skipped"])
+        taus[(task, ctx)] = {"agg": A, "score": task_score(task, per), "n_by_run": Mw["n_by_run"],
+                             "walks": [{n: {g: x[f"g{g}"][:2] for g in GAM if f"g{g}" in x}
+                                        for n, x in r["drafts"].items()} for r in per],
+                             "kvfrac": {n: v / ctx for n, v in Mw["kv_tokens_equiv"].items() if n in A["drafts"]},
+                             "files": Mw["files"],
+                             "patched_text_same": [all(r.get("patched_text_same", {}).values()) for r in per]}
+    out = {"run": run, "runs": runs or [run], "patch": list(patch), "tp_runs": list(tp_runs), "workloads": {}}
     for (task, ctx), T in sorted(taus.items(), key=lambda x: (x[0][1], TASK_ORDER.index(x[0][0]) if x[0][0] in TASK_ORDER else 99)):
         A = T["agg"]
         W = {"task": task, "ctx": ctx, "n": A["n_prompts"], "n_skipped": A["n_skipped"], "mean_P": A["mean_P"],
+             "n_by_run": T["n_by_run"], "patched_trajectory_identical": sum(T["patched_text_same"]),
              "mean_N": A["mean_N"], "target_task_score": T["score"], "tau": {n: {f"g{g}": v[f"tau_g{g}"] for g in GAM if f"tau_g{g}" in v}
                                             for n, v in A["drafts"].items()},
              "alpha1": {n: v["alpha_step"][0] for n, v in A["drafts"].items()}, "kv_frac": T["kvfrac"], "points": {}}
@@ -208,22 +272,26 @@ def tables(out):
     L = []
     P = L.append
     ws = out["workloads"]
-    P("# E7 magicvq v4 - far-context workloads: tau and break-even vs SnapKV")
-    P("speedup = [computed from measured parts]: tau measured here x v3 TP=4 step times (synthetic weights). "
-      "hyb* c is ESTIMATED [I] (no kernel run). CommVQ: no TP timing.\n")
+    P(f"# E7 magicvq {out.get('tag', 'v4')} - far-context workloads: tau and break-even vs SnapKV")
+    P(f"tau runs {out['runs']} (disjoint samples merged) + patch runs {out['patch']} (extra drafts on the same samples); "
+      f"TP=4 timing runs {out['tp_runs']} (synthetic weights, GPUs 4-7).")
+    P("speedup = [computed from measured parts]: measured tau x measured TP=4 step times. hyb* c: measured where the "
+      "timing run has a hybrid kernel record (hyb:<rq>[ctx-W]+bf16[W], no per-round encode: generated tokens stay in "
+      "the bf16 part), else ESTIMATED [I]. Drafts with no step time in the timing runs have tau only. CommVQ: no TP "
+      "timing.\n")
     P("## workloads")
-    P("| task | ctx | n | skipped (<128 tok) | mean P | mean N | target task score (synthetic) |")
-    P("|---|---|---|---|---|---|---|")
+    P("| task | ctx | n | n per run | skipped (<128 tok) | mean P | mean N | target task score (synthetic) |")
+    P("|---|---|---|---|---|---|---|---|")
     for W in ws.values():
         sc = W["target_task_score"]
-        P(f"| {W['task']} | {W['ctx']} | {W['n']} | {W['n_skipped']} | {W['mean_P']:.0f} | {W['mean_N']:.0f} | "
-          f"{'-' if sc is None else f'{sc:.2f}'} |")
+        P(f"| {W['task']} | {W['ctx']} | {W['n']} | {W.get('n_by_run', {})} | {W['n_skipped']} | {W['mean_P']:.0f} | "
+          f"{W['mean_N']:.0f} | {'-' if sc is None else f'{sc:.2f}'} |")
     P("target task score: syn_quote = char similarity of the target output to the true paragraph; syn_kv = fraction of "
       "the 16 codes the target output contains; syn_cont = fraction of the generated ledger records that match the "
       "true records verbatim.")
     # headline: per workload x point, best SnapKV vs best non-SnapKV
     for pt in ("B16_ctx32768", "B8_ctx32768", "B16_ctx16384", "B8_ctx16384"):
-        P(f"\n## {pt}: best SnapKV vs best other draft per family (speedup, gamma) [computed from measured parts; hyb c [I]]")
+        P(f"\n## {pt}: best SnapKV vs best other draft per family (speedup, gamma) [computed from measured parts; hyb c as in the header]")
         fams = ["StreamingLLM", "RQ1+win", "RQ2+win", "RQ1", "RQ2", "KIVI+win", "hybrid SnapKV+RQ0.5", "hybrid SnapKV+RQ1",
                 "hybrid SnapKV+RQ2"]
         P("| task | best SnapKV | " + " | ".join(fams) + " | best non-SnapKV / SnapKV |")
@@ -241,8 +309,9 @@ def tables(out):
             P(f"| {W['task']} | {X['best_snapkv_speedup']:.3f} ({X['best_snapkv']}, g{X['best_snapkv_gamma']}) | "
               + " | ".join(cells) + f" | {br['vs_best_snapkv']:.3f} ({bn}) |")
     P("\n## drafts that beat the best SnapKV (computed speedup ratio > 1), with paired-bootstrap 90 % CI over prompts")
-    P("measured c = v3 TP=4 kernel timing; [I] = hybrid, c estimated. StreamingLLM rows with the same c and tau as "
-      "SnapKV (ties) are omitted.")
+    P("c from the timing runs above; [I] = hybrid with c estimated (no kernel record). StreamingLLM rows with the same c "
+      "and tau as SnapKV (ties) are omitted. CI: paired prompt bootstrap (2000 resamples), each draft at its own "
+      "full-data best gamma.")
     P("| point | task | draft | c | speedup (g) | best SnapKV (g) | ratio | 90 % CI |")
     P("|---|---|---|---|---|---|---|---|")
     for pt in ("B16_ctx32768", "B8_ctx32768", "B16_ctx16384", "B8_ctx16384"):
@@ -262,8 +331,9 @@ def tables(out):
     for pt in ("B16_ctx32768", "B16_ctx16384", "B8_ctx32768"):
         P(f"\n## {pt}: tau ratio vs SnapKV (highest tau among budgets with c <= c_X) and break-even ratio, gamma 3 / 4 / 6")
         P("cell = ratio / BE (pass if ratio >= BE); * = passes at that gamma")
-        drafts = ["vqpL1+r512", "vqpL2", "vqpL2+r128", "vqpL2+r512", "kivi4g32+r128", "hyb1024qL1", "hyb2048qL1",
-                  "hyb1024pL1", "hyb2048pL1", "hyb512pL2", "hyb1024pL2"]
+        drafts = [d for d in ["vqpL1+r512", "vqpL2", "vqpL2+r128", "vqpL2+r512", "kivi4g32+r128", "hyb1024qL1",
+                              "hyb2048qL1", "hyb1024pL1", "hyb2048pL1", "hyb512pL2", "hyb1024pL2", "hyb2048pL2"]
+                  if any(d in W["points"].get(pt, {}).get("rows", {}) for W in ws.values())]
         P("| task | " + " | ".join(drafts) + " |")
         P("|---|" + "---|" * len(drafts))
         for W in ws.values():
@@ -292,7 +362,19 @@ def tables(out):
                   f"{r['vs_best_snapkv']:.3f}") if r else "- | - | -"
             P(f"| {n} | {family(n)} | {W['kv_frac'].get(n, 0):.4f} | {W['alpha1'][n]:.3f} | "
               + " | ".join(f"{t.get(f'g{g}', float('nan')):.2f}" for g in (1, 2, 3, 4, 6)) + f" | {cs} |")
+    if out.get("e2e"):
+        P("\n## e2e loop check (e2e_loop.py, TP=4 GPUs 4-7, synthetic weights, acceptance replayed from the syn_quote 32k "
+          "v4b match traces (24 new samples), fixed cache length; median of 3 reps)")
+        P("| B | draft (tau draft) | gamma | spec tok/s | AR tok/s | e2e speedup | tau replayed |")
+        P("|---|---|---|---|---|---|---|")
+        import statistics as st
+        for e in out["e2e"]:
+            P(f"| {e['args']['B']} | {e['args']['draft']} ({e['args']['tau_draft']}) | {e['args']['gamma']} | "
+              f"{st.median(e['spec_tok_per_s']):.0f} | {st.median(e['ar_tok_per_s']):.0f} | {e['speedup_e2e_median']:.3f} | "
+              f"{e['tau_replayed']:.2f} |")
     # SnapKV drop vs PG-19
+    if out.get("no_v3_ref"):
+        return "\n".join(L)
     P("\n## SnapKV / StreamingLLM tau(g4) on each workload relative to PG-19 (and chat) at the same ctx (v3 tables)")
     names = ["snapkv512", "snapkv1024", "snapkv2048", "snapkv4096", "evict1024", "vqpL1+r512", "exact"]
     P("| task | ctx | " + " | ".join(names) + " |")
@@ -363,7 +445,8 @@ def plots(out, base):
             h, l = axs[0][0].get_legend_handles_labels()
             fig.legend(h, l, loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=9)
             fig.suptitle(f"Llama-3.1-8B self-spec drafts on far-context workloads: {ylab.split(' (')[0]} vs draft cost "
-                         f"({pt.replace('_', ' ')}); hollow/dashed = hybrid, c estimated [I]", fontsize=11)
+                         f"({pt.replace('_', ' ')}; timing {'+'.join(out['tp_runs'])}); hollow/dashed = c estimated [I], "
+                         f"solid = measured", fontsize=11)
             fig.tight_layout()
             fn = f"{base}_{sfx}_{pt}.png"
             fig.savefig(fn, dpi=120, bbox_inches="tight")
@@ -379,8 +462,17 @@ def main():
     ap.add_argument("--tag", default="v4")
     ap.add_argument("--plots", action="store_true")
     ap.add_argument("--save", action="store_true")
+    ap.add_argument("--runs", nargs="+", default=None, help="tau runs merged as disjoint samples (default: --run)")
+    ap.add_argument("--patch", nargs="*", default=[], help="tau runs adding drafts to the same sample ids")
+    ap.add_argument("--tasks", nargs="*", default=None)
+    ap.add_argument("--tp", nargs="+", default=["v1", "v1b"], help="bench_tp_<run>.json timing runs")
+    ap.add_argument("--no_v3_ref", action="store_true")
+    ap.add_argument("--e2e", default=None, help="tag of e2e_loop.py result files to list (mgpu/e2e_<tag>_*.json)")
     a = ap.parse_args()
-    out = analyse(a.run)
+    out = analyse(a.run, a.runs, a.patch, a.tasks, a.tp)
+    out["tag"], out["no_v3_ref"] = a.tag, a.no_v3_ref
+    if a.e2e:
+        out["e2e"] = [json.load(open(f)) for f in sorted(glob.glob(f"{ROOT}/e2e_{a.e2e}_*.json"))]
     txt = tables(out)
     print(txt)
     base = os.path.join(REPO, "results", "E7", f"llama8b_magicvq_{a.tag}")
@@ -391,12 +483,16 @@ def main():
     if a.save:
         sys.path.insert(0, REPO)
         from tools.results import save_result
+        meas = any(r.get("hyb") for r in tp_records(a.tp).values())
         print(save_result("E7", f"llama8b_magicvq_{a.tag}", {
             "model": "Llama-3.1-8B-Instruct bf16, bf16 KV target; drafts = same weights + compressed KV",
-            "tau_run": a.run, "workloads": "LongBench (THUDM/LongBench data.zip) + synthetic PG-19 haystack tasks",
-            "timing": "v3 TP=4 bench_tp_v1+v1b (synthetic weights, GPUs 4-7); hybrid c estimated"},
+            "tau_runs": out["runs"], "tau_patch_runs": out["patch"], "tasks": a.tasks,
+            "workloads": "LongBench (THUDM/LongBench data.zip) + synthetic PG-19 haystack tasks",
+            "timing": f"TP=4 bench_tp_{'+'.join(a.tp)} (synthetic weights, GPUs 4-7); hybrid c "
+                      + ("measured (kvq_hybrid kernel, no per-round encode)" if meas else "estimated")},
             {k: v for k, v in out.items() if k != "v3_ref"}, "/data/models/llama3.1_8b_instruct",
-            notes="speedup computed from measured step parts x measured tau; hybrid draft c estimated [I]"))
+            notes="speedup computed from measured step parts x measured tau; hybrid c "
+                  + ("measured where a hyb record exists" if meas else "estimated [I]")))
 
 
 if __name__ == "__main__":

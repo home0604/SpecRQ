@@ -56,6 +56,16 @@ def build_draft(m, name, B, ctx, T, a):
         kv = KVCache(m.nl, B, m.hkv, W + 8, mode="bf16")
         best, _ = MB.tune(m, "bf16", kv, B, W - 1, 1, None, 2, 3)
         return MB.Step(m, "bf16", kv, B, W - 1, 1, best["backend"], best["splits"], best["chunk"]), None
+    if name.startswith("hyb"):  # v4b: hyb<W>rq2 = RQ over ctx - W tokens + bf16 W tokens (LSE merge), no encode
+        import re
+        mm = re.fullmatch(r"hyb(\d+)(rq1|rq2|rq05)", name)
+        W, base = int(mm.group(1)), mm.group(2)
+        kw, kst = {"rq1": (dict(d=8, bits=[8, 8]), 1), "rq2": (dict(d=8, bits=[8, 8]), 2),
+                   "rq05": (dict(d=16, bits=[8, 8]), 1)}[base]
+        kv = KVCache(m.nl, B, m.hkv, T, mode="vq", **kw)
+        best, _ = MB.tune(m, "vq", kv, B, ctx - W, 1, kst, 2, 3)
+        wc = KVCache(m.nl, B, m.hkv, W + 8, mode="bf16")
+        return MB.Step(m, "vq", kv, B, ctx - W, 1, best["backend"], best["splits"], best["chunk"], kst, wc, W), None
     base, _, r = name.partition("+r")
     R = int(r) if r else None
     if base.startswith("rq"):
@@ -117,6 +127,7 @@ def main():
     s_ar = MB.Step(m, "bf16", kvt, B, ctx, 1, bt["backend"], bt["splits"], bt["chunk"])
     s_v = MB.Step(m, "bf16", kvt, B, ctx, g + 1, bv["backend"], bv["splits"], bv["chunk"])
     s_d, enc = build_draft(m, a.draft, B, ctx, T, a)
+    torch.cuda.empty_cache()  # v4b: free tuning leftovers before graph capture (hyb B16x32k OOM otherwise)
     g_ar, g_v, g_d = graph(s_ar.full), graph(s_v.full), graph(s_d.full)
     g_e = graph(enc) if enc is not None else None
     # acceptance traces

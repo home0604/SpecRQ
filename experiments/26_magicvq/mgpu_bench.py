@@ -17,6 +17,10 @@ Per (B, ctx) and step kind (CUDA graph of `iters` steps, `reps` replays, median/
                    K group quant per step); R >= 32 (a partial K group is always bf16 in KIVI)
     gs<b>[+r<R>]   GSRQ pre-RoPE per-position codebooks (kvq_prerope.py GS kernel; unoptimized) + torch encoder
     cvq1           CommVQ 1-bit official Triton kernels + official encoders (pp only; see commvq_time.py)
+    hyb <rq><W>    (v4b) SnapKV+RQ hybrid: bf16 attention over W tokens (SnapKV-selected set incl. its 32-token window)
+                   + RQ LUT/WMMA kernel over the other ctx - W tokens, merged by the two-set LSE combine (kvq_hybrid).
+                   Own generated tokens go to the bf16 part -> no per-round encode (enc = 0); the bf16 part is timed at
+                   a fixed W tokens (generated tokens appended during decoding ignored, as for evict<W> / SnapKV).
   enc_M<g+1>: encoding the gamma+1 verified tokens into the draft cache once per round (VQ / KIVI / GSRQ).
 Usage (driver): tools/run_tmux.sh ... python experiments/26_magicvq/mgpu_bench.py --mode tp --run v1  (via torchrun)
 """
@@ -82,6 +86,18 @@ def gtime(fn, iters, reps):
         DIST.all_reduce(t, op=DIST.ReduceOp.MAX)
         ts = t.tolist()
     return {"us": statistics.median(ts), "min": min(ts), "max": max(ts), "reps": reps, "iters": iters}
+
+
+def nvsmi_apps():
+    """raw `nvidia-smi --query-compute-apps` rows (all GPUs) with the GPU index, for the co-tenant record."""
+    import subprocess
+    idx = dict(r.split(", ") [::-1] for r in subprocess.run(["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader"],
+                                                           capture_output=True, text=True).stdout.strip().splitlines())
+    rows = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory,gpu_uuid", "--format=csv,noheader"],
+                          capture_output=True, text=True).stdout.strip().splitlines()
+    return {"time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "apps": [{"pid": int(p), "mem": mem, "gpu": idx.get(u.strip())} for p, mem, u in
+                     (x.split(", ") for x in rows if x.strip())]}
 
 
 def rms(x, w):
@@ -296,9 +312,11 @@ def main():
     ap.add_argument("--budgets", type=int, nargs="+", default=[256, 512, 1024, 2048, 4096])
     ap.add_argument("--rq", nargs="+", default=["rq1", "rq2", "rq05"])
     ap.add_argument("--rq_windows", type=int, nargs="+", default=[128, 512])
-    ap.add_argument("--kivi", type=int, nargs="+", default=[2, 4])
+    ap.add_argument("--kivi", type=int, nargs="*", default=[2, 4])
     ap.add_argument("--kivi_windows", type=int, nargs="+", default=[32, 128])
-    ap.add_argument("--gs", nargs="+", default=["gs1", "gs2", "gs05"])
+    ap.add_argument("--gs", nargs="*", default=["gs1", "gs2", "gs05"])
+    ap.add_argument("--hyb_rq", nargs="*", default=[], help="v4b: SnapKV+RQ hybrid drafts, e.g. rq2")
+    ap.add_argument("--hyb_windows", type=int, nargs="+", default=[512, 1024, 2048])
     ap.add_argument("--gs_windows", type=int, nargs="+", default=[128, 512])
     ap.add_argument("--cvq", action="store_true")
     ap.add_argument("--no_lm", action="store_true", help="pp: stage without lm_head (only the last stage has it)")
@@ -348,6 +366,7 @@ def main():
     else:
         m = Model(8, 32, 8, 14336, VOCAB, lm_head=not a.no_lm)
     co0 = cot()
+    nv0 = nvsmi_apps()
     torch.cuda.synchronize()
     free = torch.cuda.mem_get_info()[0]
     log(f"model shard built: {torch.cuda.memory_allocated() / 2**30:.2f} GiB, free {free / 2**30:.2f} GiB, "
@@ -355,7 +374,7 @@ def main():
     kvtok = m.nl * 2 * m.hkv * D * 2
     Ms = [g + 1 for g in a.gammas]
     out = {"config": vars(a), "world": world, "shard": {"nl": m.nl, "hq": m.hq, "hkv": m.hkv, "inter": m.inter},
-           "cotenants_start": co0, "fit": [], "records": []}
+           "cotenants_start": co0, "nvsmi_apps_start": nv0, "fit": [], "records": []}
     path = f"{OUT}/bench_{tag}.json"
     for gspec in a.grid:
         B, ctx = (int(x) for x in gspec.split("x"))
@@ -435,12 +454,33 @@ def main():
                 rec["cvq"] = {"error": repr(e)[:300]}
                 log(f"[cvq] error {e!r}"[:300])
             torch.cuda.empty_cache()
+        # SnapKV+RQ hybrid (v4b): RQ over ctx - W tokens + bf16 W tokens, LSE merge; no per-round encode
+        if a.hyb_rq:
+            rec["hyb"] = {}
+        for name in a.hyb_rq:
+            kw, kst = {"rq1": (dict(d=8, bits=[8, 8]), 1), "rq2": (dict(d=8, bits=[8, 8]), 2),
+                       "rq05": (dict(d=16, bits=[8, 8]), 1)}[name]
+            kv = KVCache(m.nl, B, m.hkv, T, mode="vq", **kw)
+            rec["hyb"][name] = {}
+            for W in a.hyb_windows:
+                if W >= ctx:
+                    continue
+                r = measure(m, "vq", kv, B, ctx - W, 1, a, kst=kst, windows=[W - 16])  # window cache wlen = W
+                rec["hyb"][name][W] = {"full": r[f"r{W - 16}"]["full"], "backend": r[f"r{W - 16}"]["backend"],
+                                       "splits": r[f"r{W - 16}"]["splits"], "vq_tokens": ctx - W, "bf16_tokens": W,
+                                       "attn_tune": r["attn_tune"]}
+            del kv
+            torch.cuda.empty_cache()
+        if a.hyb_rq:
+            log(f"[hyb] " + " ".join(f"{n}w{W}:{r['full']['us'] / 1e3:.2f}" for n, x in rec["hyb"].items()
+                                     for W, r in x.items()))
         rec["co_after"] = cot()
         rec["wall_s"] = time.time() - t0
         out["records"].append(rec)
         if rank == 0:
             json.dump(out, open(path + ".partial", "w"))
     out["cotenants_end"] = cot()
+    out["nvsmi_apps_end"] = nvsmi_apps()
     if rank == 0 or a.mode == "pp":
         json.dump(out, open(path, "w"), indent=1)
     log("done")
