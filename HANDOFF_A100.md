@@ -19,6 +19,11 @@ Written 2026-11-18 on the original server ("shark", 8× RTX 4090 24GB). Goal on 
 - **Comparison:** eviction drafts (StreamingLLM, SnapKV = MagicDec's drafts) vs quantized-KV drafts (plain RQ post-RoPE, KIVI, GSRQ, CommVQ), each optionally with a bf16 recent window.
 - **Hybrid draft:** SnapKV-selected tokens kept in bf16, all other tokens in RQ 2-bit (`hyb512pL2`).
 - **Headline metric (user decision 2026-11-18): decode-only speedup vs AR**, measured. Prefill and compression cost go only in a secondary column.
+- **Batch accounting (decided 2026-11-18, after the MagicDec repro): report both, headline = all-active.**
+  - *all-active* (MagicDec official accounting, close to continuous batching): speedup = τ·T_AR/T_round. Our recomputation matches official MagicDec within 1%.
+  - *static* (what `e2e_real.py` measures): fixed gen per sequence, finished rows idle (τ_eff < τ). Eviction drafts lose more here (τ_eff/τ 0.58–0.91 for SnapKV vs 0.88–0.96 for VQ/hybrid), so static inflates the VQ advantage.
+  - v5 best VQ ÷ best SnapKV, static → all-active: syn_quote 32k B16 1.26 → 1.12, hotpotqa_q 16k 1.21 → 1.05, syn_quote B8 1.07 → 1.05, PG-19 0.92 → 0.94 (`results/E7/llama8b_magicvq_v5_accounting.md`, `experiments/26_magicvq/v5_accounting.py`).
+  - On the A100, record both in every run (ideally also an all-active measured mode in `e2e_real.py`, not only derived).
 
 ## Results so far (4× RTX 4090, TP=4, PCIe, NCCL_P2P_DISABLE=1)
 
