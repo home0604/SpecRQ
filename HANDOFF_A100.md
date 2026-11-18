@@ -28,7 +28,7 @@ Written 2026-11-18 on the original server ("shark", 8× RTX 4090 24GB). Goal on 
 | v3 | step timing in the KV-dominated regime, TP=4 | SnapKV fastest at every (B, ctx). B·ctx ≤ ~512k tokens fits. |
 | v4/v4b | eviction-unfavourable tasks (LongBench + synthetic), 36 samples, hybrid c measured | RQ2 drafts beat SnapKV only when the output copies far context: syn_quote 32k hybrid 1.117× [1.081, 1.152] of SnapKV, hotpotqa_q 16k 1.085×. |
 | **v5** | **fully measured e2e**: real weights, prefill, compression, ragged static-batch decode | Decode speedup vs AR. syn_quote 32k B16: SnapKV 1.200×, RQ2+r128 1.399×, hybrid **1.510×**. hotpotqa_q 16k: SnapKV 0.937×, hybrid 1.134×. PG-19 32k: SnapKV **1.434×** > hybrid 1.320×. |
-| v6 (in progress) | draft-specific RQ codebooks (layer-local attention-output loss, `rqd_*.py`) | Trained codebooks `pt1, pt1w, pt2, pt2w` exist; τ eval is running. The 32k eval OOMed on a 24GB card. |
+| v6 | draft-specific RQ codebooks (layer-local attention-output loss, `rqd_*.py`; codebooks `pt1,pt1w,pt2,pt2w` in the artifact tar) | Trained 2-bit raises τ on every task (hyb ×1.03–1.16). Computed vs SnapKV, B16: syn_quote 32k 1.192×, hotpotqa_q 32k 1.140×, gov_report 32k 1.118× (was 1.01×), PG-19 32k 0.964× (was 0.895×). Trained 1-bit +18–89% τ but still < old 2-bit. **Not yet e2e-measured: run e2e_real.py with `--cbfile .../cb_d8K256x2_post_cn_t2w.pt` first on the A100.** |
 | MagicDec official (in progress) | `experiments/27_magicdec_repro` | Env at `/data/lsh/envs/magicdec` on shark; not finished. |
 
 Comparison with the MagicDec paper (PG-19, 32k, Llama-3.1-8B):

@@ -37,7 +37,7 @@ def base_name(n):
     return re.sub(r"p(t1w|t2w|t1|t2)(L\d)", r"p\2", n)
 
 
-def load_tau(runs=("v6a", "v6b"), pg_run="v6"):
+def load_tau(runs=("v6a", "v6b", "v6a2"), pg_run="v6"):
     W = {}
     for run in runs:
         for fn in sorted(glob.glob(f"{LB}/tau_{run}_*_ctx*.json")):
@@ -185,7 +185,7 @@ def tables(out):
     P("Same format / kernel as 'p' (d8 K256 x 2, post-RoPE K, per-head codebooks + per-channel mu/sd) -> same step "
       "time c. pt1 / pt1w: trained for 1 stage (L1) with R = 0 / 128 exact recent window in the loss; pt2 / pt2w: 2 "
       "stages (L2). hyb512*: SnapKV-512 bf16 + VQ rest. speedup = [computed from measured parts]: tau (this run) x "
-      "TP=4 step times (bench_tp_v6 = the v4b command + rq1 / hyb rq1, synthetic weights, GPUs 4-7; '(v1)' = c taken from the v1 timing run rescaled by T_AR; [I] = estimated c). "
+      f"TP=4 step times (bench_tp_{out.get('tp_run', 'v6')}, synthetic weights, GPUs 4-7; '(v1)' = 1-bit c taken from the v1 timing run rescaled by T_AR; [I] = estimated c, hyb512pL1 has no kernel record). "
       "Decode-only metric. Old and trained drafts are paired (same process, same target trajectories).\n")
     P("## workloads")
     P("| task | ctx | n | n per run | mean P |")
@@ -243,7 +243,7 @@ def plots(out, base):
         ws = [A for A in out["workloads"].values() if pt in A["points"]]
         if not ws:
             continue
-        fig, axes = plt.subplots(1, len(ws), figsize=(4.2 * len(ws), 4.0), squeeze=False)
+        fig, axes = plt.subplots(1, len(ws), figsize=(4.6 * len(ws), 4.4), squeeze=False)
         for ax, A in zip(axes[0], ws):
             X = A["points"][pt]
             for i, ((o, t), lab) in enumerate(zip(pairs, labels)):
@@ -264,8 +264,8 @@ def plots(out, base):
             ax.axhline(X["best_snapkv_speedup"], color="#d1242f", lw=0.7, ls="--")
             ax.axhline(1.0, color="k", lw=0.5)
             ax.set_title(f"{A['task']} ctx {A['ctx']}", fontsize=9)
-            ax.set_xlabel("draft step cost c = T_draft / T_AR (measured, TP=4)")
-            ax.set_ylabel("speedup vs AR (computed: tau x measured step times)")
+            ax.set_xlabel("c = T_draft / T_AR (measured TP=4)", fontsize=8)
+            ax.set_ylabel("speedup vs AR [computed]", fontsize=8)
         axes[0][0].scatter([], [], color="#9aa0a6", label="old (k-means) codebook")
         axes[0][0].scatter([], [], color="#1f6feb", marker="s", label="draft-trained codebook")
         axes[0][0].scatter([], [], color="#1f6feb", marker="s", facecolors="none", label="c estimated [I]")
@@ -279,8 +279,11 @@ def plots(out, base):
         files.append(fn)
     # tau g4 bars old vs trained
     ws = list(out["workloads"].values())
-    fig, axes = plt.subplots(1, len(ws), figsize=(3.6 * len(ws), 3.6), squeeze=False)
-    for ax, A in zip(axes[0], ws):
+    nc = (len(ws) + 1) // 2
+    fig, axes = plt.subplots(2, nc, figsize=(3.8 * nc, 7.4), squeeze=False)
+    for ax in axes.flat[len(ws):]:
+        ax.axis("off")
+    for ax, A in zip(axes.flat, ws):
         xs = range(len(pairs))
         old = [A["tau"].get(o, {}).get("g4", float("nan")) for o, _ in pairs]
         new = [A["tau"].get(t, {}).get("g4", float("nan")) for _, t in pairs]
@@ -330,7 +333,7 @@ def main():
                     "heldout-end windows, 4 LongBench 2wikimqa (task not in eval) with target answers; held-out "
                     "1 per source",
             "tau_runs": ["v6a (v4 ids)", "v6b (v4b ids)", "tau_eval v6 PG-19 books 0..35"],
-            "timing": "TP=4 bench_tp_v4b (+ v1/v1b for 1-bit, rescaled)"},
+            "timing": f"TP=4 bench_tp_{a.tp} (+ v1/v1b for 1-bit, rescaled; hyb512pL1 estimated)"},
             out, "/data/models/llama3.1_8b_instruct",
             notes="speedup computed from measured tau x measured step times (decode only); trained codebooks keep the "
                   "'p' format so c is unchanged"))
