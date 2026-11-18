@@ -62,12 +62,14 @@ source .specrq_env; export TORCH_CUDA_ARCH_LIST=8.0          # A100 = sm_80 (cod
   - Run `python experiments/26_magicvq/e2e_kern_test.py` first; it must print `ALL OK`.
 - **NCCL.** On the 4090s, P2P hung, so all TP runs used `NCCL_P2P_DISABLE=1`. On A100 with NVLink, try P2P on first: it lowers the per-step all_reduce floor (~2–3 ms/step on 4090 PCIe). Record which one you used.
 
-## A100 40GB measurement plan (≥ 32k)
+## A100 measurement plan (≥ 32k) — server has **2× A100 40GB** (user, 2026-11-18)
 
 Memory budget:
 - bf16 KV of Llama-3.1-8B is 128 KB per token (32 layers × 8 kv-heads × 128 × K,V × 2 B).
-- TP=4 on 40GB: about 4 GB weights per rank, roughly 30 GB left for KV, so B·ctx ≈ 0.9–1.0M tokens (shark: ~0.5M).
-- TP=8: about 2M tokens. TP must divide 8 kv-heads, so TP ≤ 8.
+- **TP=2** (only option): about 8 GB weights per rank, roughly 26–28 GB left per rank for KV at 64 KB/token/rank, so **B·ctx ≈ 0.40–0.45M tokens** in total. That is about the same as shark's 4×4090 (~0.5M). The gain is longer ctx at small B, not more total tokens.
+- Feasible points (target KV only): 32k B8–12, 64k B4–6, 128k B2–3. VQ/hybrid drafts need the extra draft cache below, so the largest B is a bit lower.
+- Per-step weight time per rank is about 2× that of TP4. At small B the regime is less KV-dominated, so expect smaller speedups than at B16×32k on shark. Report T_AR, the KV share, and c alongside the speedup.
+- `e2e_real.py` / `mgpu_bench.py` shard by `WORLD` (`HQA//WORLD`, `HKVA//WORLD`), so TP=2 should work (4 kv-heads per rank). This has never been run: smoke-test first and check the AR output against the 1-GPU reference.
 - The RQ2 or hybrid draft cache adds about 1/8 of the target KV plus the window.
 - Check `fit` before running. Report the largest B that fits all drafts and compare all drafts at that same B.
 
@@ -75,8 +77,8 @@ Steps:
 
 1. **Kernel sanity:** `e2e_kern_test.py`, then re-tune split plans. `e2e_real.py` tunes by CUDA-graph timing.
 2. **Fully measured e2e** (`experiments/26_magicvq/e2e_real.py`, decode-only headline):
-   - ctx ∈ {32k, 64k, 128k} × B ∈ {as large as fits; e.g. TP4: 32k B16/B32, 64k B8/B16, 128k B4/B8}.
-   - Drafts: AR, SnapKV {2048, 4096}, StreamingLLM 512, RQ2+r128 (`vqpL2+r128`), hybrid `hyb512pL2`. Add trained codebooks (`pt2w` etc.) if v6 shows a τ gain.
+   - TP=2, ctx ∈ {32k, 64k, 128k} × B ∈ {largest that fits all drafts; roughly 32k B8, 64k B4, 128k B2}. Also run 32k B8 to overlap with shark's v5 points (B8×32k syn_quote).
+   - Drafts: AR, SnapKV {2048, 4096}, StreamingLLM 512, RQ2+r128 (`vqpL2+r128`), hybrid `hyb512pL2`. **Also both RQ2 drafts with the v6-trained codebook** (`--cbfile <DATA>/results_accept/magicvq/cb/cb_d8K256x2_post_cn_t2w.pt`). v6 raised τ on every task, but this has not been e2e-measured yet, so do it first. Add gov_report 32k: v6 turned it into a VQ win (computed).
    - Tasks:
      - `syn_quote`: synthetic far-context quoting. Scales to any ctx; haystack = PG-19 books.
      - PG-19: books long enough for 64k/128k exist in pg19-test.
@@ -84,9 +86,9 @@ Steps:
        - Bug: the 32k prompts are not reproducible across processes because of set order in `lb_tasks.lb_prompts`. Fix with `sorted(own)`; this changes the v4 32k prompts.
      - gov_report: only 13 samples reach ≥ 24k tokens.
    - Same AR kernels and graphs. Record the co-tenant check before and after each config.
-3. **τ at 64k/128k** (`tau_eval.py`, `lb_tau.py`): one 40GB GPU fits 64k. 128k probably needs 2 GPUs or KV offload in the τ harness.
-4. **Official MagicDec** (`experiments/27_magicdec_repro`): reproduce its Table 3(c) setting (8×A100, PG-19, StreamingLLM-512, B32–64, 32k–64k) and compare with our implementation on the same hardware.
-5. **Draft-specific codebook training (v6):** if layer-local training doesn't raise τ enough, the planned next objective is an end-to-end loss on the target's greedy token (cross-entropy or margin on top-1), not full KL. Greedy acceptance depends only on top-1 agreement.
+3. **τ at 64k/128k** (`tau_eval.py`, `lb_tau.py`): one 40GB GPU should fit 64k (16 GB weights + 8 GB KV + harness), run the two GPUs as two parallel τ jobs. 128k (16 GB KV) probably needs both GPUs or KV offload in the τ harness. Use `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (v6 32k τ OOMed without it on 24 GB).
+4. **Official MagicDec** (`experiments/27_magicdec_repro`): the same-hardware comparison is planned on shark's 4×4090 once GPUs 4–7 are free (env `/data/lsh/envs/magicdec` there). Its Table 3(c) uses 8×A100, which 2×A100 cannot match. On the A100, optionally run the official code at TP=2 with small B as a second same-hardware check.
+5. **Draft-specific codebook training (v6 done, layer-local):** if more τ is needed (e.g. for 1-bit), the planned next objective is an end-to-end loss on the target's greedy token (cross-entropy or margin on top-1), not full KL. Greedy acceptance depends only on top-1 agreement.
 
 ## Working rules carried over (from the user)
 
