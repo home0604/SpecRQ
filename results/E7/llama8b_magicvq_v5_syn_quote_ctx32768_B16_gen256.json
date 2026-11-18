@@ -1,0 +1,1331 @@
+{
+ "exp": "E7",
+ "run": "llama8b_magicvq_v5_syn_quote_ctx32768_B16_gen256",
+ "time": "2026-11-18T12:58:32",
+ "commit": "f2072c0",
+ "dirty_files": 10,
+ "host": "shark",
+ "cuda_visible_devices": null,
+ "tmux_job": null,
+ "versions": {
+  "torch": "2.4.1+cu121",
+  "transformers": "4.46.3",
+  "triton": "3.0.0",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "driver": "535.171.04"
+ },
+ "model_dir": "/data/models/llama3.1_8b_instruct",
+ "model_revision": "repo=meta-llama/Llama-3.1-8B-Instruct\nrevision=0e9e39f249a16976918f6564b8830bc894c89659",
+ "config": {
+  "model": "Llama-3.1-8B-Instruct bf16",
+  "setting": "TP=4 RTX 4090 (GPUs 4-7), fully real e2e self-spec (e2e_real.py)",
+  "B": 16,
+  "T": 32768,
+  "gen": 256,
+  "task": "syn_quote",
+  "P": [
+   31626,
+   31853,
+   31586,
+   31440,
+   32296,
+   32097,
+   32337,
+   31336,
+   30816,
+   31308,
+   29737,
+   30991,
+   31809,
+   31775,
+   31271,
+   32267
+  ],
+  "configs": [
+   "ar",
+   "snapkv4096:3",
+   "snapkv4096:4",
+   "vqpL2+r128:6",
+   "vqpL2+r128:4",
+   "hyb512pL2:6",
+   "hyb512pL2:4"
+  ]
+ },
+ "metrics": {
+  "rows": [
+   {
+    "config": "ar",
+    "draft": "AR",
+    "gamma": null,
+    "decode_tok_s": 605.4506421873224,
+    "decode_tok_s_min_max": [
+     605.4289523149494,
+     605.9324194241774
+    ],
+    "speedup_decode": 1.0,
+    "e2e_tok_s": 49.5316098221583,
+    "speedup_e2e": 1.0,
+    "prefill_s": 75.92945862002671,
+    "compress_s": 0.0,
+    "decode_s": 6.76520877936855,
+    "step_ms": 26.426596794408397,
+    "cotenant": false,
+    "cotenant_apps": [],
+    "gpus_before": [
+     {
+      "index": "0",
+      "mem_used": "1274 MiB",
+      "util": "34 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "36 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "49 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "51 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "20824 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "20824 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "20824 MiB",
+      "util": "42 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "20824 MiB",
+      "util": "0 %"
+     }
+    ],
+    "gpus_after": [
+     {
+      "index": "0",
+      "mem_used": "1274 MiB",
+      "util": "34 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "42 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "98 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "99 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "21564 MiB",
+      "util": "36 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21486 MiB",
+      "util": "88 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21486 MiB",
+      "util": "89 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21486 MiB",
+      "util": "100 %"
+     }
+    ]
+   },
+   {
+    "config": "snapkv4096:3",
+    "draft": "snapkv4096",
+    "gamma": 3,
+    "decode_tok_s": 726.8259852180298,
+    "decode_tok_s_min_max": [
+     726.8100422029331,
+     726.9331228516934
+    ],
+    "speedup_decode": 1.2004710781909695,
+    "e2e_tok_s": 50.11459516745253,
+    "speedup_e2e": 1.0117699656317938,
+    "prefill_s": 75.92945862002671,
+    "compress_s": 0.16775628784671426,
+    "decode_s": 5.6354616968892515,
+    "rounds": 87,
+    "breakdown_s": {
+     "draft_s": 2.9827822151184082,
+     "verify_s": 2.647810525894165,
+     "accept_s": 0.003213312115520239,
+     "encode_s": 0.00011878399970009922,
+     "host_s": 0.0015368597614573432
+    },
+    "per_round_ms": {
+     "draft_s": 34.284853047338025,
+     "verify_s": 30.434603745909943,
+     "accept_s": 0.03693462201747401,
+     "encode_s": 0.001365333329886198,
+     "host_s": 0.01766505472939475
+    },
+    "tau_measured": 3.5531547104580814,
+    "tau_measured_pre_eos": 3.5157790927021697,
+    "tau_v4b_same_samples": 3.5,
+    "tau_eff_batch": 2.942528735632184,
+    "match_vs_ar_mean": 1.0,
+    "n_seq_identical": 16,
+    "first_divergence": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    "peak_GiB": 19.84646463394165,
+    "draft_plan": [
+     [
+      8,
+      576
+     ],
+     null
+    ],
+    "verify_plan": [
+     [
+      4,
+      8192
+     ],
+     null
+    ],
+    "cotenant": false,
+    "cotenant_apps": [],
+    "gpus_before": [
+     {
+      "index": "0",
+      "mem_used": "1274 MiB",
+      "util": "34 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "41 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "49 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "47 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "21486 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21486 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21486 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21486 MiB",
+      "util": "100 %"
+     }
+    ],
+    "gpus_after": [
+     {
+      "index": "0",
+      "mem_used": "1294 MiB",
+      "util": "29 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "47 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "48 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "46 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "21616 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21528 MiB",
+      "util": "95 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21528 MiB",
+      "util": "95 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21528 MiB",
+      "util": "100 %"
+     }
+    ],
+    "v4b_computed": {
+     "tau36": 3.443207126948775,
+     "speedup": 1.4200564928250812,
+     "T_AR_ms": 26.795689453125,
+     "T_draft_ms": 11.258880859375,
+     "T_verify_ms": 31.19479296875,
+     "T_enc_ms": 0.0
+    }
+   },
+   {
+    "config": "snapkv4096:4",
+    "draft": "snapkv4096",
+    "gamma": 4,
+    "decode_tok_s": 677.7969405761268,
+    "decode_tok_s_min_max": [
+     677.6530621419399,
+     677.9710783086205
+    ],
+    "speedup_decode": 1.1194916535680557,
+    "e2e_tok_s": 49.8657865904311,
+    "speedup_e2e": 1.006746737476788,
+    "prefill_s": 75.92945862002671,
+    "compress_s": 0.16792064486071467,
+    "decode_s": 6.043107831850648,
+    "rounds": 78,
+    "breakdown_s": {
+     "draft_s": 3.556692623138428,
+     "verify_s": 2.4816987209320067,
+     "accept_s": 0.0028887041062116625,
+     "encode_s": 0.00011059199972078204,
+     "host_s": 0.001717191674280194
+    },
+    "per_round_ms": {
+     "draft_s": 45.59862337356959,
+     "verify_s": 31.81665026835906,
+     "accept_s": 0.03703466802835465,
+     "encode_s": 0.0014178461502664364,
+     "host_s": 0.022015277875387103
+    },
+    "tau_measured": 4.221084953940634,
+    "tau_measured_pre_eos": 4.148319814600232,
+    "tau_v4b_same_samples": 4.098152424942263,
+    "tau_eff_batch": 3.282051282051282,
+    "match_vs_ar_mean": 0.990234375,
+    "n_seq_identical": 15,
+    "first_divergence": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     216,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    "peak_GiB": 19.862374782562256,
+    "draft_plan": [
+     [
+      8,
+      576
+     ],
+     null
+    ],
+    "verify_plan": [
+     [
+      4,
+      8192
+     ],
+     null
+    ],
+    "cotenant": false,
+    "cotenant_apps": [],
+    "gpus_before": [
+     {
+      "index": "0",
+      "mem_used": "1294 MiB",
+      "util": "27 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "28 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "45 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "45 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "21528 MiB",
+      "util": "1 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21528 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21528 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21528 MiB",
+      "util": "100 %"
+     }
+    ],
+    "gpus_after": [
+     {
+      "index": "0",
+      "mem_used": "1294 MiB",
+      "util": "34 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "43 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "49 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "99 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "21654 MiB",
+      "util": "30 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21568 MiB",
+      "util": "92 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21568 MiB",
+      "util": "92 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21568 MiB",
+      "util": "100 %"
+     }
+    ],
+    "v4b_computed": {
+     "tau36": 4.0534871525957,
+     "speedup": 1.3969612532104096,
+     "T_AR_ms": 26.795689453125,
+     "T_draft_ms": 11.258880859375,
+     "T_verify_ms": 32.716083984375,
+     "T_enc_ms": 0.0
+    }
+   },
+   {
+    "config": "vqpL2+r128:6",
+    "draft": "vqpL2+r128",
+    "gamma": 6,
+    "decode_tok_s": 823.5662112206425,
+    "decode_tok_s_min_max": [
+     805.8294807359129,
+     823.9293467232213
+    ],
+    "speedup_decode": 1.3602532623391563,
+    "e2e_tok_s": 49.6959333221418,
+    "speedup_e2e": 1.0033175481389258,
+    "prefill_s": 75.92945862002671,
+    "compress_s": 1.5182803329080343,
+    "decode_s": 4.973492044955492,
+    "rounds": 47,
+    "breakdown_s": {
+     "draft_s": 3.3798187789916994,
+     "verify_s": 1.569954460144043,
+     "accept_s": 0.0017510400675237179,
+     "encode_s": 0.021092351734638214,
+     "host_s": 0.0008754140175870617
+    },
+    "per_round_ms": {
+     "draft_s": 71.91103785088723,
+     "verify_s": 33.40328638604347,
+     "accept_s": 0.037256171649440804,
+     "encode_s": 0.44877344116251516,
+     "host_s": 0.018625830161426844
+    },
+    "tau_measured": 6.183308494783905,
+    "tau_measured_pre_eos": 6.4649910233393175,
+    "tau_v4b_same_samples": 6.348837209302325,
+    "tau_eff_batch": 5.446808510638298,
+    "match_vs_ar_mean": 0.990234375,
+    "n_seq_identical": 15,
+    "first_divergence": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     216,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    "peak_GiB": 21.89914894104004,
+    "draft_plan": [
+     [
+      3,
+      64
+     ],
+     [
+      4,
+      8192
+     ]
+    ],
+    "verify_plan": [
+     [
+      4,
+      8192
+     ],
+     null
+    ],
+    "cotenant": false,
+    "cotenant_apps": [],
+    "gpus_before": [
+     {
+      "index": "0",
+      "mem_used": "1294 MiB",
+      "util": "34 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "41 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "46 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "99 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "21568 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21568 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21568 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21568 MiB",
+      "util": "100 %"
+     }
+    ],
+    "gpus_after": [
+     {
+      "index": "0",
+      "mem_used": "1270 MiB",
+      "util": "34 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "26 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "70 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "99 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "23886 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21608 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21608 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21608 MiB",
+      "util": "91 %"
+     }
+    ],
+    "v4b_computed": {
+     "tau36": 6.218825422365246,
+     "speedup": 1.5459653564073508,
+     "T_AR_ms": 26.795689453125,
+     "T_draft_ms": 12.1326611328125,
+     "T_verify_ms": 34.575359375,
+     "T_enc_ms": 0.41745065307617185
+    }
+   },
+   {
+    "config": "vqpL2+r128:4",
+    "draft": "vqpL2+r128",
+    "gamma": 4,
+    "decode_tok_s": 847.0315121848281,
+    "decode_tok_s_min_max": [
+     847.0188627876207,
+     847.6319463605012
+    ],
+    "speedup_decode": 1.3990100152916547,
+    "e2e_tok_s": 49.77937601030565,
+    "speedup_e2e": 1.0050021832328273,
+    "prefill_s": 75.92945862002671,
+    "compress_s": 1.5179023030214012,
+    "decode_s": 4.83571147127077,
+    "rounds": 60,
+    "breakdown_s": {
+     "draft_s": 2.8994135932922362,
+     "verify_s": 1.9077248878479003,
+     "accept_s": 0.002219008080661297,
+     "encode_s": 0.025218047976493834,
+     "host_s": 0.0011359340734777845
+    },
+    "per_round_ms": {
+     "draft_s": 48.32355988820394,
+     "verify_s": 31.795414797465003,
+     "accept_s": 0.03698346801102161,
+     "encode_s": 0.4203007996082306,
+     "host_s": 0.018932234557963078
+    },
+    "tau_measured": 4.660270880361174,
+    "tau_measured_pre_eos": 4.791164658634538,
+    "tau_v4b_same_samples": 4.738317757009346,
+    "tau_eff_batch": 4.266666666666667,
+    "match_vs_ar_mean": 0.990234375,
+    "n_seq_identical": 15,
+    "first_divergence": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     216,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    "peak_GiB": 21.904029369354248,
+    "draft_plan": [
+     [
+      3,
+      64
+     ],
+     [
+      4,
+      8192
+     ]
+    ],
+    "verify_plan": [
+     [
+      4,
+      8192
+     ],
+     null
+    ],
+    "cotenant": false,
+    "cotenant_apps": [],
+    "gpus_before": [
+     {
+      "index": "0",
+      "mem_used": "1270 MiB",
+      "util": "33 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "32 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "99 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "31 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "21608 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21608 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21608 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21608 MiB",
+      "util": "100 %"
+     }
+    ],
+    "gpus_after": [
+     {
+      "index": "0",
+      "mem_used": "1270 MiB",
+      "util": "33 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "77 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "47 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "50 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "23890 MiB",
+      "util": "16 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21648 MiB",
+      "util": "98 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21648 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21648 MiB",
+      "util": "100 %"
+     }
+    ],
+    "v4b_computed": {
+     "tau36": 4.665057332528666,
+     "speedup": 1.5321036634954937,
+     "T_AR_ms": 26.795689453125,
+     "T_draft_ms": 12.1326611328125,
+     "T_verify_ms": 32.716083984375,
+     "T_enc_ms": 0.34267730712890626
+    }
+   },
+   {
+    "config": "hyb512pL2:6",
+    "draft": "hyb512pL2",
+    "gamma": 6,
+    "decode_tok_s": 906.7753575929565,
+    "decode_tok_s_min_max": [
+     906.5840787798663,
+     907.3927642642017
+    ],
+    "speedup_decode": 1.4976866723884097,
+    "e2e_tok_s": 49.85680591052654,
+    "speedup_e2e": 1.0065654253826162,
+    "prefill_s": 75.92945862002671,
+    "compress_s": 1.7087188493460417,
+    "decode_s": 4.517105549573898,
+    "rounds": 42,
+    "breakdown_s": {
+     "draft_s": 3.1113301849365236,
+     "verify_s": 1.403115322113037,
+     "accept_s": 0.001555456057190895,
+     "encode_s": 5.939199985004961e-05,
+     "host_s": 0.001045194467296895
+    },
+    "per_round_ms": {
+     "draft_s": 74.07929011753627,
+     "verify_s": 33.407507669358026,
+     "accept_s": 0.037034668028354645,
+     "encode_s": 0.0014140952345249908,
+     "host_s": 0.024885582554687972
+    },
+    "tau_measured": 6.605723370429253,
+    "tau_measured_pre_eos": 6.623161764705882,
+    "tau_v4b_same_samples": 6.46448087431694,
+    "tau_eff_batch": 6.095238095238095,
+    "match_vs_ar_mean": 0.990234375,
+    "n_seq_identical": 15,
+    "first_divergence": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     216,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    "peak_GiB": 21.92359161376953,
+    "draft_plan": [
+     [
+      7,
+      128
+     ],
+     [
+      4,
+      8192
+     ]
+    ],
+    "verify_plan": [
+     [
+      4,
+      8192
+     ],
+     null
+    ],
+    "cotenant": false,
+    "cotenant_apps": [],
+    "gpus_before": [
+     {
+      "index": "0",
+      "mem_used": "1270 MiB",
+      "util": "33 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "69 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "49 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "45 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "21648 MiB",
+      "util": "18 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21648 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21648 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21648 MiB",
+      "util": "100 %"
+     }
+    ],
+    "gpus_after": [
+     {
+      "index": "0",
+      "mem_used": "1272 MiB",
+      "util": "33 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "37 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "48 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "49 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "23946 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21688 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21688 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21688 MiB",
+      "util": "91 %"
+     }
+    ],
+    "v4b_computed": {
+     "tau36": 6.409618573797678,
+     "speedup": 1.5865747950762572,
+     "T_AR_ms": 26.795689453125,
+     "T_draft_ms": 12.279466796875,
+     "T_verify_ms": 34.575359375,
+     "T_enc_ms": 0.0
+    }
+   },
+   {
+    "config": "hyb512pL2:4",
+    "draft": "hyb512pL2",
+    "gamma": 4,
+    "decode_tok_s": 913.9789941392248,
+    "decode_tok_s_min_max": [
+     913.7567239684512,
+     914.1124150882997
+    ],
+    "speedup_decode": 1.5095846472922656,
+    "e2e_tok_s": 49.878504202814916,
+    "speedup_e2e": 1.0070034949783002,
+    "prefill_s": 75.92945862002671,
+    "compress_s": 1.7085815351456404,
+    "decode_s": 4.481503433082253,
+    "rounds": 55,
+    "breakdown_s": {
+     "draft_s": 2.725661392211914,
+     "verify_s": 1.752420223236084,
+     "accept_s": 0.0020428800769150255,
+     "encode_s": 7.270399981644005e-05,
+     "host_s": 0.001306233557524017
+    },
+    "per_round_ms": {
+     "draft_s": 49.55747985839844,
+     "verify_s": 31.86218587701971,
+     "accept_s": 0.03714327412572774,
+     "encode_s": 0.0013218909057534554,
+     "host_s": 0.02374970104589122
+    },
+    "tau_measured": 4.835873388042204,
+    "tau_measured_pre_eos": 4.8367071524966265,
+    "tau_v4b_same_samples": 4.783018867924528,
+    "tau_eff_batch": 4.654545454545454,
+    "match_vs_ar_mean": 0.990234375,
+    "n_seq_identical": 15,
+    "first_divergence": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     216,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    "peak_GiB": 21.923987865447998,
+    "draft_plan": [
+     [
+      7,
+      128
+     ],
+     [
+      4,
+      8192
+     ]
+    ],
+    "verify_plan": [
+     [
+      4,
+      8192
+     ],
+     null
+    ],
+    "cotenant": false,
+    "cotenant_apps": [],
+    "gpus_before": [
+     {
+      "index": "0",
+      "mem_used": "1272 MiB",
+      "util": "34 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "37 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "50 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "44 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "21688 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21688 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21688 MiB",
+      "util": "100 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21688 MiB",
+      "util": "100 %"
+     }
+    ],
+    "gpus_after": [
+     {
+      "index": "0",
+      "mem_used": "1272 MiB",
+      "util": "34 %"
+     },
+     {
+      "index": "1",
+      "mem_used": "4496 MiB",
+      "util": "33 %"
+     },
+     {
+      "index": "2",
+      "mem_used": "5444 MiB",
+      "util": "50 %"
+     },
+     {
+      "index": "3",
+      "mem_used": "8476 MiB",
+      "util": "47 %"
+     },
+     {
+      "index": "4",
+      "mem_used": "23950 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "5",
+      "mem_used": "21728 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "6",
+      "mem_used": "21728 MiB",
+      "util": "0 %"
+     },
+     {
+      "index": "7",
+      "mem_used": "21728 MiB",
+      "util": "38 %"
+     }
+    ],
+    "v4b_computed": {
+     "tau36": 4.7539975399753995,
+     "speedup": 1.5566478205916292,
+     "T_AR_ms": 26.795689453125,
+     "T_draft_ms": 12.279466796875,
+     "T_verify_ms": 32.716083984375,
+     "T_enc_ms": 0.0
+    }
+   }
+  ],
+  "prefill_s": 75.92945862002671,
+  "cotenants_start": [],
+  "cotenants_end": [],
+  "nvsmi_apps_start": {
+   "time": "2026-11-18T12:29:43",
+   "apps": [
+    {
+     "pid": 1223731,
+     "mem": "4490 MiB",
+     "gpu": "1"
+    },
+    {
+     "pid": 1223733,
+     "mem": "5438 MiB",
+     "gpu": "2"
+    },
+    {
+     "pid": 1223739,
+     "mem": "8470 MiB",
+     "gpu": "3"
+    },
+    {
+     "pid": 1316357,
+     "mem": "574 MiB",
+     "gpu": "4"
+    },
+    {
+     "pid": 1316358,
+     "mem": "574 MiB",
+     "gpu": "5"
+    },
+    {
+     "pid": 1316359,
+     "mem": "574 MiB",
+     "gpu": "6"
+    },
+    {
+     "pid": 1316360,
+     "mem": "574 MiB",
+     "gpu": "7"
+    }
+   ],
+   "gpus": [
+    {
+     "index": "0",
+     "mem_used": "0 MiB",
+     "util": "0 %"
+    },
+    {
+     "index": "1",
+     "mem_used": "4496 MiB",
+     "util": "43 %"
+    },
+    {
+     "index": "2",
+     "mem_used": "5444 MiB",
+     "util": "49 %"
+    },
+    {
+     "index": "3",
+     "mem_used": "8476 MiB",
+     "util": "59 %"
+    },
+    {
+     "index": "4",
+     "mem_used": "580 MiB",
+     "util": "3 %"
+    },
+    {
+     "index": "5",
+     "mem_used": "580 MiB",
+     "util": "5 %"
+    },
+    {
+     "index": "6",
+     "mem_used": "580 MiB",
+     "util": "4 %"
+    },
+    {
+     "index": "7",
+     "mem_used": "580 MiB",
+     "util": "0 %"
+    }
+   ]
+  },
+  "nvsmi_apps_end": {
+   "time": "2026-11-18T12:35:12",
+   "apps": [
+    {
+     "pid": 1320306,
+     "mem": "1266 MiB",
+     "gpu": "0"
+    },
+    {
+     "pid": 1223731,
+     "mem": "4490 MiB",
+     "gpu": "1"
+    },
+    {
+     "pid": 1223733,
+     "mem": "5438 MiB",
+     "gpu": "2"
+    },
+    {
+     "pid": 1223739,
+     "mem": "8470 MiB",
+     "gpu": "3"
+    },
+    {
+     "pid": 1316357,
+     "mem": "21722 MiB",
+     "gpu": "4"
+    },
+    {
+     "pid": 1316358,
+     "mem": "21722 MiB",
+     "gpu": "5"
+    },
+    {
+     "pid": 1316359,
+     "mem": "21722 MiB",
+     "gpu": "6"
+    },
+    {
+     "pid": 1316360,
+     "mem": "21722 MiB",
+     "gpu": "7"
+    }
+   ],
+   "gpus": [
+    {
+     "index": "0",
+     "mem_used": "1272 MiB",
+     "util": "34 %"
+    },
+    {
+     "index": "1",
+     "mem_used": "4496 MiB",
+     "util": "31 %"
+    },
+    {
+     "index": "2",
+     "mem_used": "5444 MiB",
+     "util": "48 %"
+    },
+    {
+     "index": "3",
+     "mem_used": "8476 MiB",
+     "util": "44 %"
+    },
+    {
+     "index": "4",
+     "mem_used": "21728 MiB",
+     "util": "0 %"
+    },
+    {
+     "index": "5",
+     "mem_used": "21728 MiB",
+     "util": "0 %"
+    },
+    {
+     "index": "6",
+     "mem_used": "21728 MiB",
+     "util": "0 %"
+    },
+    {
+     "index": "7",
+     "mem_used": "21728 MiB",
+     "util": "0 %"
+    }
+   ]
+  }
+ },
+ "notes": "raw: /data/lsh/results_accept/magicvq/e2e_real/run_v5_syn_quote_ctx32768_B16.json; all speedups measured wall clock vs AR of the same run"
+}
