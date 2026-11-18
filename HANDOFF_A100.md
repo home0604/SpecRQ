@@ -25,7 +25,7 @@ Written 2026-11-18 on the original server ("shark", 8× RTX 4090 24GB). Goal on 
   - v5 best VQ ÷ best SnapKV, static → all-active: syn_quote 32k B16 1.26 → 1.12, hotpotqa_q 16k 1.21 → 1.05, syn_quote B8 1.07 → 1.05, PG-19 0.92 → 0.94 (`results/E7/llama8b_magicvq_v5_accounting.md`, `experiments/26_magicvq/v5_accounting.py`).
   - **Measured (v5aa):** `e2e_real.py --accounting both` measures static and all-active in one run. VQ ÷ SnapKV all-active measured: syn_quote B16 1.108, gen512 1.065, B8 1.049, hotpotqa_q 16k **1.012** (derived was 1.049), PG-19 0.931 (`results/E7/llama8b_magicvq_v5aa_tables.md`). Headline = all-active **measured**. Use `--accounting both` on the A100.
   - all-active stops when the longest row reaches gen, so slow rows contribute only their early tokens (where acceptance may be higher), as in the official MagicDec loop.
-  - Known issue: `csrc/vqattn_lut_rag.cu:95` float atomicAdd in shared memory makes VQ/hybrid draft logits non-deterministic → per-row lengths differ across reps (tokens identical on overlap; throughput spread 0.1–1%). Not fixed yet.
+  - Fixed (v6e2e): `csrc/vqattn_lut_rag.cu` used a shared-memory float atomicAdd (non-deterministic draft logits). Now a fixed-order warp reduction: bit-identical across 200 reps, kernel 8–13% faster (`experiments/26_magicvq/lut_determinism_bench.py`). Rebuild the extension on the A100.
   - Draft-max reuse (unified max for verify): estimate is good (gap p99 0.5–2.2) but the saving bound is 0.3–0.5% of verify on TP4/4090 (`results/E7/llama8b_magicvq_maxreuse_tables.md`). Dropped.
 
 ## Results so far (4× RTX 4090, TP=4, PCIe, NCCL_P2P_DISABLE=1)
@@ -36,7 +36,7 @@ Written 2026-11-18 on the original server ("shark", 8× RTX 4090 24GB). Goal on 
 | v3 | step timing in the KV-dominated regime, TP=4 | SnapKV fastest at every (B, ctx). B·ctx ≤ ~512k tokens fits. |
 | v4/v4b | eviction-unfavourable tasks (LongBench + synthetic), 36 samples, hybrid c measured | RQ2 drafts beat SnapKV only when the output copies far context: syn_quote 32k hybrid 1.117× [1.081, 1.152] of SnapKV, hotpotqa_q 16k 1.085×. |
 | **v5** | **fully measured e2e**: real weights, prefill, compression, ragged static-batch decode | Decode speedup vs AR. syn_quote 32k B16: SnapKV 1.200×, RQ2+r128 1.399×, hybrid **1.510×**. hotpotqa_q 16k: SnapKV 0.937×, hybrid 1.134×. PG-19 32k: SnapKV **1.434×** > hybrid 1.320×. |
-| v6 | draft-specific RQ codebooks (layer-local attention-output loss, `rqd_*.py`; codebooks `pt1,pt1w,pt2,pt2w` in the artifact tar) | Trained 2-bit raises τ on every task (hyb ×1.03–1.16). Computed vs SnapKV, B16: syn_quote 32k 1.192×, hotpotqa_q 32k 1.140×, gov_report 32k 1.118× (was 1.01×), PG-19 32k 0.964× (was 0.895×). Trained 1-bit +18–89% τ but still < old 2-bit. **Not yet e2e-measured: run e2e_real.py with `--cbfile .../cb_d8K256x2_post_cn_t2w.pt` first on the A100.** |
+| v6 | draft-specific RQ codebooks (layer-local attention-output loss, `rqd_*.py`; codebooks `pt1,pt1w,pt2,pt2w` in the artifact tar) | Trained 2-bit raises τ on every task (hyb ×1.03–1.16). Computed vs SnapKV, B16: syn_quote 32k 1.192×, hotpotqa_q 32k 1.140×, gov_report 32k 1.118× (was 1.01×), PG-19 32k 0.964× (was 0.895×). Trained 1-bit +18–89% τ but still < old 2-bit. **e2e-measured (v6e2e, `e2e_real.py --cbx t2w=<cb_d8K256x2_post_cn_t2w.pt>`, config `<draft>@t2w:<g>`)**: best VQ/hybrid ÷ best SnapKV, all-active measured, default → t2w: syn_quote 32k B16 1.115 → **1.165**, gen512 1.074 → 1.101, B8 1.066 → 1.108, hotpotqa_q 16k 1.020 → 1.058, PG-19 0.935 → 0.988 (`results/E7/llama8b_magicvq_v6e2e_tables.md`). Measured τ gain matches the v6 computed gain for RQ2, slightly lower for hybrid. |
 | MagicDec official (done, `24476a1`) | `experiments/27_magicdec_repro`, `results/E7/llama8b_magicdec_official_tables.md` | Same PG-19 rows on 4×4090: our SnapKV τ within ~2% of official Ω. Official speedup B8 SnapKV-4097 γ3 1.30×, B16 SnapKV-513 γ3 1.54× vs ours 1.19×/1.22× (gen 80); the gap is batch accounting (official keeps every row generating), ours recomputed that way = 1.31×/1.53×. Official kernels 4–12% faster. Official B16 SnapKV-4097@32k OOMs on 24 GB. Env `/data/lsh/envs/magicdec25` (torch 2.5.1, flashinfer 0.1.6). |
 
 Comparison with the MagicDec paper (PG-19, 32k, Llama-3.1-8B):
@@ -93,7 +93,7 @@ Steps:
 
 1. **Kernel sanity:** `e2e_kern_test.py`, then re-tune split plans. `e2e_real.py` tunes by CUDA-graph timing.
 2. **Fully measured e2e** (`experiments/26_magicvq/e2e_real.py`, decode-only headline):
-   - TP=2, ctx ∈ {32k, 64k, 128k} × B ∈ {largest that fits all drafts; roughly 32k B8, 64k B4, 128k B2}. Also run 32k B8 to overlap with shark's v5 points (B8×32k syn_quote).
+   - TP=2, `--accounting both`, ctx ∈ {32k, 64k, 128k} × B ∈ {largest that fits all drafts; roughly 32k B8, 64k B4, 128k B2}. Also run 32k B8 to overlap with shark's v5 points (B8×32k syn_quote).
    - Drafts: AR, SnapKV {2048, 4096}, StreamingLLM 512, RQ2+r128 (`vqpL2+r128`), hybrid `hyb512pL2`. **Also both RQ2 drafts with the v6-trained codebook** (`--cbfile <DATA>/results_accept/magicvq/cb/cb_d8K256x2_post_cn_t2w.pt`). v6 raised τ on every task, but this has not been e2e-measured yet, so do it first. Add gov_report 32k: v6 turned it into a VQ win (computed).
    - Tasks:
      - `syn_quote`: synthetic far-context quoting. Scales to any ctx; haystack = PG-19 books.

@@ -82,17 +82,22 @@ __global__ void __launch_bounds__(NW * 32) lut_rag_kernel(
   const int qpos = QPOS[b];
   float* sQ = reinterpret_cast<float*>(smem + L::warp_off);
   float* sQmu = reinterpret_cast<float*>(smem + L::qmu_off);
-  if (tid < GM) sQmu[tid] = 0.f;
-  __syncthreads();
-  for (int i = tid; i < GM * D; i += NTH) {
-    const int r = i / D, c = i % D;  // M = 1: r = q-head within the group
+  // q . muk per q-head: deterministic fixed-order reduction (was a shared-memory float atomicAdd, whose order varied
+  // between launches -> draft logits not bit-reproducible). One (r, c) per thread: warp shuffle tree, then the
+  // D / 32 warp partials of each row are summed in fixed order below.
+  static_assert(NTH == GM * D && NW * 4 <= 64, "one (r, c) per thread; NW partials fit the 64-byte qmu slot");
+  {
+    const int r = tid / D, c = tid % D;  // M = 1: r = q-head within the group
     const __nv_bfloat16* qr = qkv + (long)b * sq_r + (h * G + r) * D;
     float x = __bfloat162float(qr[c]), xp = __bfloat162float(qr[(c + D / 2) % D]);
     float sn, cs;
     sincosf((float)qpos * invf[c % (D / 2)], &sn, &cs);
     const float rot = __bfloat162float(__float2bfloat16(x * cs + (c < D / 2 ? -1.f : 1.f) * xp * sn));
     sQ[r * D + c] = rot * SDK[h * D + c] * qk_scale;
-    atomicAdd(&sQmu[r], rot * MUK[h * D + c] * qk_scale);
+    float pm = rot * MUK[h * D + c] * qk_scale;
+#pragma unroll
+    for (int o = 16; o; o >>= 1) pm += __shfl_xor_sync(0xffffffff, pm, o);
+    if (lane == 0) sQmu[warp] = pm;  // warp w holds row w / (D / 32)
   }
   __syncthreads();
 #pragma unroll
@@ -119,7 +124,12 @@ __global__ void __launch_bounds__(NW * 32) lut_rag_kernel(
   }
   float qmu[GM];
 #pragma unroll
-  for (int r = 0; r < GM; ++r) qmu[r] = sQmu[r];
+  for (int r = 0; r < GM; ++r) {
+    float a = 0.f;
+#pragma unroll
+    for (int w = 0; w < D / 32; ++w) a += sQmu[r * (D / 32) + w];
+    qmu[r] = a;
+  }
   __syncthreads();  // sQ region becomes the warp-private region
 
   uint8_t* wb = smem + L::warp_off + warp * L::warp_bytes;

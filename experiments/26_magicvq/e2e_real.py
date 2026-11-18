@@ -642,9 +642,9 @@ def run_spec(m, st, draft, gamma, reps, modes=("static",)):
         if mode == "static":  # as before: the first gen tokens of every row are identical across reps
             assert torch.equal(o, R["out"]), "spec outputs differ between reps"
         else:
-            # all_active: tokens must agree on each row's overlap; per-row LENGTHS may differ between reps because
-            # the VQ LUT draft kernel is not bit-deterministic (shared-memory float atomicAdd of the q.mu term), so
-            # acceptance (not the verified tokens) can change; the static loop hides this (only out[:, :gen] compared)
+            # all_active: tokens must agree on each row's overlap; per-row LENGTHS could differ between reps when a
+            # draft kernel is not bit-deterministic (the VQ LUT kernel was, via a shared-memory float atomicAdd of the
+            # q.mu term, until v6e2e; now a fixed-order reduction): 'rep_ngen_differs' records it
             n = torch.minimum(ngen, R["ngen"])
             ok = (torch.arange(o.shape[1], device=o.device)[None] >= n[:, None]) | (o == R["out"])
             assert bool(ok.all()), "spec outputs differ between reps on the overlap (all_active)"
@@ -683,6 +683,9 @@ def main():
     ap.add_argument("--skip", type=int, default=0, help="first prompt index")
     ap.add_argument("--tag", required=True)
     ap.add_argument("--cbfile", default=CBFILE, help="v6: 'p'-format codebook file (e.g. a draft-trained one)")
+    ap.add_argument("--cbx", nargs="*", default=[], metavar="TAG=PATH",
+                    help="extra codebooks for per-draft use: config '<draft>@TAG:<gamma>' (e.g. vqpL2+r128@t2w:4) "
+                         "uses PATH instead of --cbfile; same AR baseline / process")
     ap.add_argument("--accounting", default="static", choices=["static", "all_active", "both"],
                     help="batch accounting of the spec loop (both = interleaved reps in one run, shared graphs / AR)")
     a = ap.parse_args()
@@ -728,6 +731,12 @@ def main():
     log(f"prefill {sum(pf):.1f}s (per seq {statistics.median(pf):.2f}s), peak {rec['prefill']['peak_GiB']:.2f} GiB")
     cb = CB(m, a.cbfile)
     rec["cbfile"] = a.cbfile
+    cbs = {"": cb}
+    rec["cbx"] = {}
+    for x in a.cbx:
+        tag, path = x.split("=", 1)
+        cbs[tag] = CB(m, path)
+        rec["cbx"][tag] = path
     rec["configs"] = {}
     ar_out = None
     for c in a.configs:
@@ -744,7 +753,8 @@ def main():
         else:
             name, g = c.split(":")
             g = int(g)
-            d = Draft(name, m, st, cb)
+            name, _, cbtag = name.partition("@")  # '<draft>@TAG': codebook from --cbx TAG=PATH
+            d = Draft(name, m, st, cbs[cbtag])
             ct = []
             for rep in range(4):  # compression: warm-up + 3 timed
                 torch.cuda.synchronize()
