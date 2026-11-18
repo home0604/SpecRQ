@@ -4,12 +4,14 @@
 #   name : short id, e.g. e2_qwen_c1_smoke  -> tmux session "sr-<name>"
 #   gpus : CUDA_VISIBLE_DEVICES value (e.g. 0 or 0,1) or "none"; refuses GPUs with >2 GB in use
 #   env  : conda env name (e.g. nestvq)
-# Files: /data/lsh/logs/<name>.{log,meta.json,sh}. meta gets end/exit_code on finish.
+# Env: SPECRQ_DATA (default /data/lsh), SPECRQ_CONDA_SH (conda.sh path).
+# Files: $SPECRQ_DATA/logs/<name>.{log,meta.json,sh}. meta gets end/exit_code on finish.
 # Monitor: tmux attach -t sr-<name> | tail -f /data/lsh/logs/<name>.log | tools/jobs.sh
 set -euo pipefail
 [[ $# -ge 5 && "$4" == "--" ]] || { echo "usage: $0 <name> <gpus|none> <env> -- <cmd...>"; exit 2; }
 NAME=$1; GPUS=$2; ENV=$3; shift 4
-REPO=/hai/home/lsh/SpecRQ; LOGDIR=/data/lsh/logs; mkdir -p "$LOGDIR"
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd); DATA=${SPECRQ_DATA:-/data/lsh}; LOGDIR=$DATA/logs; mkdir -p "$LOGDIR"
+CONDA_SH=${SPECRQ_CONDA_SH:-/hai/anaconda3/etc/profile.d/conda.sh}
 SESS="sr-$NAME"; LOG="$LOGDIR/$NAME.log"; META="$LOGDIR/$NAME.meta.json"; RUNNER="$LOGDIR/$NAME.sh"
 tmux has-session -t "=$SESS" 2>/dev/null && { echo "session $SESS already exists"; exit 1; }
 [[ -e "$LOG" || -e "$META" ]] && { echo "$LOG exists; pick a new name"; exit 1; }
@@ -30,11 +32,11 @@ json.dump({"name":name,"session":sess,"gpus":gpus,"env":env,"cmd":cmd,"commit":g
 PY
 cat > "$RUNNER" <<RUN
 #!/usr/bin/env bash
-source /hai/anaconda3/etc/profile.d/conda.sh
+source $CONDA_SH
 conda activate $ENV
 cd $REPO
-export HF_HOME=/data/lsh/hf_cache PYTHONUNBUFFERED=1
-T=/data/lsh/temp; export TMPDIR=\$T/tmp TORCHINDUCTOR_CACHE_DIR=\$T/inductor_cache TRITON_CACHE_DIR=\$T/triton_cache TORCH_EXTENSIONS_DIR=\$T/torch_extensions PIP_CACHE_DIR=\$T/pip_cache XDG_CACHE_HOME=\$T/xdg_cache
+export HF_HOME=$DATA/hf_cache PYTHONUNBUFFERED=1 SPECRQ_DATA=$DATA
+T=$DATA/temp; export TMPDIR=\$T/tmp TORCHINDUCTOR_CACHE_DIR=\$T/inductor_cache TRITON_CACHE_DIR=\$T/triton_cache TORCH_EXTENSIONS_DIR=\$T/torch_extensions PIP_CACHE_DIR=\$T/pip_cache XDG_CACHE_HOME=\$T/xdg_cache
 $( [[ "$GPUS" != none ]] && echo "export CUDA_VISIBLE_DEVICES=$GPUS" )
 $CMD 2>&1 | tee -a $LOG
 rc=\${PIPESTATUS[0]}

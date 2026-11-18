@@ -242,7 +242,8 @@ class Draft:
         if name.startswith("snapkv"):
             self.kind, self.W = "snapkv", int(name[6:])
         elif name.startswith("hyb"):
-            self.kind, self.W, self.kst = "hyb", int(name[3:].split("p")[0]), 2
+            self.kind, self.W = "hyb", int(name[3:].split("p")[0])
+            self.kst = int(name.split("L")[-1]) if "L" in name else 2  # v6: hyb512pL1 (1-bit VQ part)
         elif name.startswith("vqpL"):
             self.kind, self.kst, self.R = "rq", int(name[4]), int(name.split("+r")[1])
         else:
@@ -644,6 +645,7 @@ def main():
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--skip", type=int, default=0, help="first prompt index")
     ap.add_argument("--tag", required=True)
+    ap.add_argument("--cbfile", default=CBFILE, help="v6: 'p'-format codebook file (e.g. a draft-trained one)")
     a = ap.parse_args()
     torch.set_grad_enabled(False)
     dist.init_process_group("nccl")
@@ -685,7 +687,8 @@ def main():
     rec["prefill"] = {"total_s": sum(pf), "per_seq_s": pf, "P": P_list,
                       "peak_GiB": torch.cuda.max_memory_allocated() / 2**30}
     log(f"prefill {sum(pf):.1f}s (per seq {statistics.median(pf):.2f}s), peak {rec['prefill']['peak_GiB']:.2f} GiB")
-    cb = CB(m)
+    cb = CB(m, a.cbfile)
+    rec["cbfile"] = a.cbfile
     rec["configs"] = {}
     ar_out = None
     for c in a.configs:

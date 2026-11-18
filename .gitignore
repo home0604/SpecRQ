@@ -6,3 +6,5 @@ ckpts/
 *.pth
 *.safetensors
 wandb/
+.specrq_env
+.nfs*

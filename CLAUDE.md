@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code when working in this repository.
 
+> **Moving to another server (A100, E7 ≥32k): read `HANDOFF_A100.md` first** (Notion links, setup, measurement plan, working rules).
+
 ## Project
 
 **SpecRQ — nested weight-VQ self-speculative decoding (direction since 2026-11-05).**

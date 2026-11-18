@@ -43,6 +43,9 @@ CB = {  # format -> codebook file (bf16-weight KV, pile-val, chnorm, greedy RQ)
     "q": os.path.join(OUTROOT, "cb", "cb_d16K256x2_post_cn_greedy.pt"),      # POST-RoPE K (HF layout) d16 K256 x 2
 }
 POST = {"p", "q"}
+for _t in ("t1", "t1w", "t2", "t2w", "t1x", "t1wx", "t2x", "t2wx"):  # v6: 'p' format, draft-trained (rqd_train.py)
+    CB["p" + _t] = os.path.join(OUTROOT, "cb", f"cb_d8K256x2_post_cn_{_t}.pt")
+    POST.add("p" + _t)
 CB["g8"] = os.path.join(OUTROOT, "cb", "gsrq_D8C256S2.pt")    # GSRQ (VQLLM port) D8 C256 x 2: 1 bit / stage
 CB["g16"] = os.path.join(OUTROOT, "cb", "gsrq_D16C256S2.pt")  # GSRQ D16 C256 x 2: 0.5 bit / stage
 for _t, _f in (("gv8", "gsrq_D8C256S2_vn"), ("gv16", "gsrq_D16C256S2_vn"), ("gk8", "gsrq_D8C256S2_kl"),

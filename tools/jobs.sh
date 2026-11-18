@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # List SpecRQ tmux jobs with status from their meta files.
-for m in $(ls -t /data/lsh/logs/*.meta.json 2>/dev/null | head -${1:-15}); do
+for m in $(ls -t ${SPECRQ_DATA:-/data/lsh}/logs/*.meta.json 2>/dev/null | head -${1:-15}); do
   python3 - "$m" <<'PY'
 import json,sys,subprocess
 m=json.load(open(sys.argv[1]))
