@@ -37,6 +37,8 @@ Written 2026-11-18 on the original server ("shark", 8× RTX 4090 24GB). Goal on 
 | v4/v4b | eviction-unfavourable tasks (LongBench + synthetic), 36 samples, hybrid c measured | RQ2 drafts beat SnapKV only when the output copies far context: syn_quote 32k hybrid 1.117× [1.081, 1.152] of SnapKV, hotpotqa_q 16k 1.085×. |
 | **v5** | **fully measured e2e**: real weights, prefill, compression, ragged static-batch decode | Decode speedup vs AR. syn_quote 32k B16: SnapKV 1.200×, RQ2+r128 1.399×, hybrid **1.510×**. hotpotqa_q 16k: SnapKV 0.937×, hybrid 1.134×. PG-19 32k: SnapKV **1.434×** > hybrid 1.320×. |
 | v6 | draft-specific RQ codebooks (layer-local attention-output loss, `rqd_*.py`; codebooks `pt1,pt1w,pt2,pt2w` in the artifact tar) | Trained 2-bit raises τ on every task (hyb ×1.03–1.16). Computed vs SnapKV, B16: syn_quote 32k 1.192×, hotpotqa_q 32k 1.140×, gov_report 32k 1.118× (was 1.01×), PG-19 32k 0.964× (was 0.895×). Trained 1-bit +18–89% τ but still < old 2-bit. **e2e-measured (v6e2e, `e2e_real.py --cbx t2w=<cb_d8K256x2_post_cn_t2w.pt>`, config `<draft>@t2w:<g>`)**: best VQ/hybrid ÷ best SnapKV, all-active measured, default → t2w: syn_quote 32k B16 1.115 → **1.165**, gen512 1.074 → 1.101, B8 1.066 → 1.108, hotpotqa_q 16k 1.020 → 1.058, PG-19 0.935 → 0.988 (`results/E7/llama8b_magicvq_v6e2e_tables.md`). Measured τ gain matches the v6 computed gain for RQ2, slightly lower for hybrid. |
+| v7 (`2bc678c`) | more benchmarks, t2w, all-active measured, best over γ/budget | VQ ÷ SnapKV: gov_report 16k 1.16, hotpotqa_q 16k 1.09, qmsum 16k 1.09, gov_report 32k B8 1.08, repobench-p 16k 1.04, PG-19 32k 1.00 (SnapKV γ6 measured). StreamingLLM-512 < SnapKV everywhere. LongBench SnapKV only γ≤4. `results/E7/llama8b_magicvq_v7_tables.md` |
+| v7mse (`b6b929f`) | MSE-trained control codebook t2mw (same pipeline, `rqd_train.py --loss mse`) | aa t2w ÷ t2mw: syn_quote +0.4–1.1%, hotpotqa RQ2 +7.7%, PG-19 +6.5–8.0%; t2mw ÷ default +1.8–6.4%. Held-out: t2w attn loss 0.026 vs t2mw 0.045, but V MSE +46%. `results/E7/llama8b_magicvq_v7mse_tables.md` |
 | MagicDec official (done, `24476a1`) | `experiments/27_magicdec_repro`, `results/E7/llama8b_magicdec_official_tables.md` | Same PG-19 rows on 4×4090: our SnapKV τ within ~2% of official Ω. Official speedup B8 SnapKV-4097 γ3 1.30×, B16 SnapKV-513 γ3 1.54× vs ours 1.19×/1.22× (gen 80); the gap is batch accounting (official keeps every row generating), ours recomputed that way = 1.31×/1.53×. Official kernels 4–12% faster. Official B16 SnapKV-4097@32k OOMs on 24 GB. Env `/data/lsh/envs/magicdec25` (torch 2.5.1, flashinfer 0.1.6). |
 
 Comparison with the MagicDec paper (PG-19, 32k, Llama-3.1-8B):
@@ -48,6 +50,8 @@ Comparison with the MagicDec paper (PG-19, 32k, Llama-3.1-8B):
 
 - Our τ is 5–10% higher than the paper's Ω.
 - The paper's large speedups (2.0–2.5×) are at B64–128 and 64k–100k context. Its Table 3(c) uses **8×A100**, so the new server allows a direct comparison.
+
+- Open issue: at γ6 some configs (VQ/hybrid and once SnapKV, never AR) give outputs that differ between the warm-up rep and timed reps (near-tie tokens); recorded via `--soft_rep_check`. Not investigated.
 
 ## Story / framing for the coursework talk (user decision 2026-11-18)
 
