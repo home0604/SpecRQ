@@ -100,7 +100,7 @@ def lb_prompts(tok, task, ctx, n_cand, min_frac=0.75, seed=0):
         for i in order[:n_cand]:
             r = rows[i]
             own = set(_passages(r["context"]))
-            ps = list(own)
+            ps = sorted(own)  # v7: was list(set) -> PYTHONHASHSEED-dependent order
             tot = len(tok(r["context"], add_special_tokens=False).input_ids)
             while tot < ctx * 1.05:
                 p = pool[rng.randrange(len(pool))]

@@ -63,6 +63,7 @@ HID, D, NL, HQA, HKVA, INTER, VOCAB, EPS = 4096, 128, 32, 32, 8, 14336, 128256, 
 EOS = {128001, 128008, 128009}
 SINKS, WIN = 16, 32
 RANK, WORLD = 0, 1
+SOFT_REP = False  # v7: --soft_rep_check
 
 
 def log(*a):
@@ -242,7 +243,10 @@ class Draft:
 
     def __init__(self, name, m, st, cb):
         self.name, self.m, self.st, self.cb = name, m, st, cb
+        self.stream = name.startswith("stream")
         if name.startswith("snapkv"):
+            self.kind, self.W = "snapkv", int(name[6:])
+        elif self.stream:  # v7: StreamingLLM-W (MagicDec): 16 sinks + last W-16 prompt tokens, then the growing window
             self.kind, self.W = "snapkv", int(name[6:])
         elif name.startswith("hyb"):
             self.kind, self.W = "hyb", int(name[3:].split("p")[0])
@@ -273,6 +277,11 @@ class Draft:
             for l in range(NL):
                 for b in range(B):
                     P = Pl[b]
+                    if self.stream:  # fixed positions [0, 16) + [P - W + 16, P - 32) (+ window [P - 32, qpos] in attn)
+                        pos = torch.cat([torch.arange(SINKS, device=dev), torch.arange(P - self.W + SINKS, P - WIN, device=dev)])
+                        self.idx[l, b, :, :pos.numel()] = pos.int()[None]
+                        self.nidx[l, b * hkv:(b + 1) * hkv] = pos.numel()
+                        continue
                     top = snap_scores(m, tc, qlast, l, b, P).topk(min(nsel, P - WIN), -1).indices
                     if self.kind == "snapkv":
                         self.idx[l, b, :, :top.shape[1]] = top.sort(-1).values.int()
@@ -640,7 +649,19 @@ def run_spec(m, st, draft, gamma, reps, modes=("static",)):
         if R["out"] is None:
             R["out"], R["log"], R["ngen"] = o, lg, ngen
         if mode == "static":  # as before: the first gen tokens of every row are identical across reps
-            assert torch.equal(o, R["out"]), "spec outputs differ between reps"
+            if SOFT_REP and not torch.equal(o, R["out"]):  # v7 --soft_rep_check: record instead of abort
+                dv = (o != R["out"])
+                fd = torch.where(dv.any(1), dv.int().argmax(1), torch.full_like(ngen, -1))
+                R.setdefault("rep_out_differs", []).append({"rep": rep, "first_div_per_row": fd.tolist()})
+                log(f"  WARNING static spec output of rep {rep} differs from rep 0 (rows {int(dv.any(1).sum())})")
+            else:
+                assert torch.equal(o, R["out"]), "spec outputs differ between reps"
+        elif SOFT_REP:
+            n = torch.minimum(ngen, R["ngen"])
+            ok = (torch.arange(o.shape[1], device=o.device)[None] >= n[:, None]) | (o == R["out"])
+            if not bool(ok.all()):
+                R.setdefault("rep_out_differs", []).append({"rep": rep, "rows": int((~ok).any(1).sum())})
+                log(f"  WARNING all_active spec output of rep {rep} differs from rep 0 on the overlap")
         else:
             # all_active: tokens must agree on each row's overlap; per-row LENGTHS could differ between reps when a
             # draft kernel is not bit-deterministic (the VQ LUT kernel was, via a shared-memory float atomicAdd of the
@@ -658,6 +679,8 @@ def run_spec(m, st, draft, gamma, reps, modes=("static",)):
     base = {"draft_plan": dplan, "draft_tune": dtune, "verify_plan": vplan, "verify_tune": vtune}
     if "static" in res:
         base["runs"] = res["static"]["runs"]
+        if "rep_out_differs" in res["static"]:
+            base["rep_out_differs"] = res["static"]["rep_out_differs"]
     if "all_active" in res:
         R = res["all_active"]
         ng = R["ngen"].tolist()
@@ -666,13 +689,15 @@ def run_spec(m, st, draft, gamma, reps, modes=("static",)):
                               "rep_ngen_differs": any(x["ngen"] != ng for x in R["runs"]),
                               "out": [row[:n] for row, n in zip(R["out"].tolist(), ng)],
                               "acc_log": R["log"].tolist()}
+        if "rep_out_differs" in R:
+            base["all_active"]["rep_out_differs"] = R["rep_out_differs"]
     S = res.get("static") or res["all_active"]
     return base, S["out"][:, :st.gen], S["log"]
 
 
 # ------------------------------------------------------------------------------------------------------------- main
 def main():
-    global RANK, WORLD
+    global RANK, WORLD, SOFT_REP
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
     ap.add_argument("--ctx", type=int, required=True)
@@ -688,7 +713,10 @@ def main():
                          "uses PATH instead of --cbfile; same AR baseline / process")
     ap.add_argument("--accounting", default="static", choices=["static", "all_active", "both"],
                     help="batch accounting of the spec loop (both = interleaved reps in one run, shared graphs / AR)")
+    ap.add_argument("--soft_rep_check", action="store_true",
+                    help="v7: record (rep_out_differs) instead of aborting when a rep's spec output differs from rep 0")
     a = ap.parse_args()
+    SOFT_REP = a.soft_rep_check
     torch.set_grad_enabled(False)
     dist.init_process_group("nccl")
     RANK, WORLD = dist.get_rank(), dist.get_world_size()
