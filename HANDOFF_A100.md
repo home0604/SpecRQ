@@ -23,7 +23,10 @@ Written 2026-11-18 on the original server ("shark", 8× RTX 4090 24GB). Goal on 
   - *all-active* (MagicDec official accounting, close to continuous batching): speedup = τ·T_AR/T_round. Our recomputation matches official MagicDec within 1%.
   - *static* (what `e2e_real.py` measures): fixed gen per sequence, finished rows idle (τ_eff < τ). Eviction drafts lose more here (τ_eff/τ 0.58–0.91 for SnapKV vs 0.88–0.96 for VQ/hybrid), so static inflates the VQ advantage.
   - v5 best VQ ÷ best SnapKV, static → all-active: syn_quote 32k B16 1.26 → 1.12, hotpotqa_q 16k 1.21 → 1.05, syn_quote B8 1.07 → 1.05, PG-19 0.92 → 0.94 (`results/E7/llama8b_magicvq_v5_accounting.md`, `experiments/26_magicvq/v5_accounting.py`).
-  - On the A100, record both in every run (ideally also an all-active measured mode in `e2e_real.py`, not only derived).
+  - **Measured (v5aa):** `e2e_real.py --accounting both` measures static and all-active in one run. VQ ÷ SnapKV all-active measured: syn_quote B16 1.108, gen512 1.065, B8 1.049, hotpotqa_q 16k **1.012** (derived was 1.049), PG-19 0.931 (`results/E7/llama8b_magicvq_v5aa_tables.md`). Headline = all-active **measured**. Use `--accounting both` on the A100.
+  - all-active stops when the longest row reaches gen, so slow rows contribute only their early tokens (where acceptance may be higher), as in the official MagicDec loop.
+  - Known issue: `csrc/vqattn_lut_rag.cu:95` float atomicAdd in shared memory makes VQ/hybrid draft logits non-deterministic → per-row lengths differ across reps (tokens identical on overlap; throughput spread 0.1–1%). Not fixed yet.
+  - Draft-max reuse (unified max for verify): estimate is good (gap p99 0.5–2.2) but the saving bound is 0.3–0.5% of verify on TP4/4090 (`results/E7/llama8b_magicvq_maxreuse_tables.md`). Dropped.
 
 ## Results so far (4× RTX 4090, TP=4, PCIe, NCCL_P2P_DISABLE=1)
 

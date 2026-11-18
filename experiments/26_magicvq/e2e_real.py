@@ -22,6 +22,9 @@ Nothing is replayed or modeled:
     Draft rows' own K/V are written into the target cache at their positions (overwritten by the verify), so the
     window / in-round tokens are bf16 exactly as in tau_eval. Sequences that reached `gen` tokens are frozen (static
     batch: they still occupy their rows until the slowest sequence finishes).
+    --accounting all_active (or both): MagicDec official accounting, measured: no row is frozen, the batch stops
+    when the longest row has >= gen tokens, throughput = all tokens of all rows / decode wall (record key
+    'all_active'); 'both' times static and all-active reps interleaved with shared plans / graphs / AR baseline.
   * AR baseline: same model code, same kernels (ragged Triton split-K flash-decoding, splits tuned the same way),
     CUDA graphs of 8 steps, no per-step host sync.
 Timing: warm-up run excluded; `reps` timed runs (median, min, max); CUDA events per graph segment for the breakdown;
@@ -542,7 +545,11 @@ def run_ar(m, st, reps, K=8):
 
 
 # ---------------------------------------------------------------------------------------------------- spec runner
-def run_spec(m, st, draft, gamma, reps):
+def run_spec(m, st, draft, gamma, reps, modes=("static",)):
+    """modes: 'static' (each row stops at gen, finished rows idle until the slowest row is done) and/or
+    'all_active' (MagicDec official accounting: no row is ever frozen; the batch stops when the LONGEST row has
+    >= gen new tokens; throughput counts every token of every row). Both modes share plans, draft / verify / encode
+    graphs; only the accept graph differs. Timed reps are interleaved (rep 0 of each mode = warm-up)."""
     B = st.B
     G1 = gamma + 1
     vplan, vtune = tune_plan(m, st, G1, None)
@@ -565,10 +572,12 @@ def run_spec(m, st, draft, gamma, reps):
         va.prep(st.length)
         targ.copy_(forward(m, dtok.reshape(-1), va).view(B, G1))
 
-    def accept_fn():
+    def accept_fn(all_active=False):
         match = (dtok[:, 1:] == targ[:, :gamma]).to(torch.int64)
         acc = match.cumprod(1).sum(1)
-        active = st.ngen < st.gen
+        # all_active: every row is active every round (at round start all rows have ngen <= gen - 1, so writes stay
+        # below gen + gamma < cap and cache positions below P + gen + gamma <= T)
+        active = torch.ones_like(acc, dtype=torch.bool) if all_active else st.ngen < st.gen
         inc = torch.where(active, acc + 1, torch.zeros_like(acc))
         idx = (st.ngen[:, None] + jj[None]).clamp(max=st.cap - 1)
         mask = active[:, None] & (jj[None] <= acc[:, None])
@@ -581,7 +590,10 @@ def run_spec(m, st, draft, gamma, reps):
         st.length.add_(inc.to(torch.int32))
         st.ngen.add_(inc)
         st.cur.copy_(torch.where(active, targ.gather(1, acc[:, None])[:, 0], st.cur))
-        st.done.copy_((st.ngen >= st.gen).all().to(torch.int32)[None])
+        if all_active:
+            st.done.copy_((st.ngen >= st.gen).any().to(torch.int32)[None])
+        else:
+            st.done.copy_((st.ngen >= st.gen).all().to(torch.int32)[None])
 
     def enc_fn():
         for l in range(NL):
@@ -592,10 +604,11 @@ def run_spec(m, st, draft, gamma, reps):
     g_d = capture(draft_fn, pool)
     st.reset()
     g_v = capture(verify_fn, pool)
-    g_a = capture(accept_fn, pool)
+    g_as = {mode: capture(lambda f=(mode == "all_active"): accept_fn(f), pool) for mode in modes}
     g_e = capture(enc_fn, pool) if draft.kind == "rq" else None
-    runs, outs, logs = [], None, None
-    for rep in range(reps + 1):
+    res = {mode: {"runs": [], "out": None, "log": None, "ngen": None} for mode in modes}
+    for rep, mode in [(r_, md) for r_ in range(reps + 1) for md in modes]:
+        g_a = g_as[mode]
         st.reset()
         torch.cuda.synchronize()
         dist.barrier()
@@ -620,17 +633,41 @@ def run_spec(m, st, draft, gamma, reps):
         torch.cuda.synchronize()
         wall = gmax_time(time.perf_counter() - t0)
         seg = [sum(a.elapsed_time(b) for a, b in ((x[i], x[i + 1]) for x in evs)) / 1e3 for i in range(4)]
-        o = st.out[:, :st.gen].clone()
+        R = res[mode]
+        ngen = st.ngen.clone()
+        o = st.out[:, :st.gen].clone() if mode == "static" else st.out.clone()
         lg = st.acc_log[:rounds].clone()
-        if outs is None:
-            outs, logs = o, lg
-        assert torch.equal(o, outs), "spec outputs differ between reps"
+        if R["out"] is None:
+            R["out"], R["log"], R["ngen"] = o, lg, ngen
+        if mode == "static":  # as before: the first gen tokens of every row are identical across reps
+            assert torch.equal(o, R["out"]), "spec outputs differ between reps"
+        else:
+            # all_active: tokens must agree on each row's overlap; per-row LENGTHS may differ between reps because
+            # the VQ LUT draft kernel is not bit-deterministic (shared-memory float atomicAdd of the q.mu term), so
+            # acceptance (not the verified tokens) can change; the static loop hides this (only out[:, :gen] compared)
+            n = torch.minimum(ngen, R["ngen"])
+            ok = (torch.arange(o.shape[1], device=o.device)[None] >= n[:, None]) | (o == R["out"])
+            assert bool(ok.all()), "spec outputs differ between reps on the overlap (all_active)"
         if rep > 0:
-            runs.append({"wall_s": wall, "rounds": rounds, "tok_per_s": B * st.gen / wall,
-                         "draft_s": seg[0], "verify_s": seg[1], "accept_s": seg[2], "encode_s": seg[3],
-                         "host_s": wall - sum(seg)})
-    del g_d, g_v, g_a, g_e
-    return {"draft_plan": dplan, "draft_tune": dtune, "verify_plan": vplan, "verify_tune": vtune, "runs": runs}, outs, logs
+            ntok = B * st.gen if mode == "static" else int(ngen.sum().item())
+            R["runs"].append({"wall_s": wall, "rounds": rounds, "tokens": ntok, "tok_per_s": ntok / wall,
+                              "ngen": ngen.tolist(),
+                              "draft_s": seg[0], "verify_s": seg[1], "accept_s": seg[2], "encode_s": seg[3],
+                              "host_s": wall - sum(seg)})
+    del g_d, g_v, g_as, g_a, g_e
+    base = {"draft_plan": dplan, "draft_tune": dtune, "verify_plan": vplan, "verify_tune": vtune}
+    if "static" in res:
+        base["runs"] = res["static"]["runs"]
+    if "all_active" in res:
+        R = res["all_active"]
+        ng = R["ngen"].tolist()
+        base["all_active"] = {"runs": R["runs"], "ngen": ng, "total_tokens": sum(ng),
+                              "tau": statistics.median(x["tokens"] / (B * x["rounds"]) for x in R["runs"]),
+                              "rep_ngen_differs": any(x["ngen"] != ng for x in R["runs"]),
+                              "out": [row[:n] for row, n in zip(R["out"].tolist(), ng)],
+                              "acc_log": R["log"].tolist()}
+    S = res.get("static") or res["all_active"]
+    return base, S["out"][:, :st.gen], S["log"]
 
 
 # ------------------------------------------------------------------------------------------------------------- main
@@ -646,6 +683,8 @@ def main():
     ap.add_argument("--skip", type=int, default=0, help="first prompt index")
     ap.add_argument("--tag", required=True)
     ap.add_argument("--cbfile", default=CBFILE, help="v6: 'p'-format codebook file (e.g. a draft-trained one)")
+    ap.add_argument("--accounting", default="static", choices=["static", "all_active", "both"],
+                    help="batch accounting of the spec loop (both = interleaved reps in one run, shared graphs / AR)")
     a = ap.parse_args()
     torch.set_grad_enabled(False)
     dist.init_process_group("nccl")
@@ -715,17 +754,32 @@ def main():
                 torch.cuda.synchronize()
                 if rep:
                     ct.append(gmax_time(time.perf_counter() - t1))
-            r, out, lg = run_spec(m, st, d, g, a.reps)
+            modes = ("static", "all_active") if a.accounting == "both" else (a.accounting,)
+            r, out, lg = run_spec(m, st, d, g, a.reps, modes)
             r["compress_s"] = {"median": statistics.median(ct), "all": ct}
-            r["out"] = out.tolist()
+            r["out"] = out.tolist()  # static: gen tokens / row; all_active only: first gen slots (rows may be shorter)
             r["acc_log"] = lg.tolist()
+            if "all_active" in r and ar_out is not None:  # greedy match vs AR on each row's overlapping prefix
+                aa = r["all_active"]
+                fd, mt = [], []
+                for row, ao in zip(aa["out"], ar_out.tolist()):
+                    n = min(len(row), len(ao))
+                    dv = [i for i in range(n) if row[i] != ao[i]]
+                    fd.append(dv[0] if dv else None)
+                    mt.append(sum(int(row[i] == ao[i]) for i in range(n)) / max(1, n))
+                aa["first_divergence_vs_ar"], aa["match_vs_ar_overlap"] = fd, mt
             r["peak_GiB"] = torch.cuda.max_memory_allocated() / 2**30
             rec["configs"][c] = r
             r["co_before"], r["co_after"] = co_b, cocheck(own) if RANK == 0 else None
             d.free()
             del d
-            log(f"[{c}] {statistics.median(x['tok_per_s'] for x in r['runs']):.1f} tok/s, rounds "
-                f"{r['runs'][0]['rounds']}, compress {statistics.median(ct):.2f}s, peak {r['peak_GiB']:.2f} GiB "
+            rr = r.get("runs") or r["all_active"]["runs"]
+            if "all_active" in r:
+                aa = r["all_active"]
+                log(f"[{c}] all_active {statistics.median(x['tok_per_s'] for x in aa['runs']):.1f} tok/s, rounds "
+                    f"{aa['runs'][0]['rounds']}, tokens {aa['total_tokens']}, tau {aa['tau']:.2f}")
+            log(f"[{c}] {statistics.median(x['tok_per_s'] for x in rr):.1f} tok/s, rounds "
+                f"{rr[0]['rounds']}, compress {statistics.median(ct):.2f}s, peak {r['peak_GiB']:.2f} GiB "
                 f"({time.time() - tc0:.0f}s)")
         torch.cuda.empty_cache()
         if RANK == 0:
