@@ -41,6 +41,14 @@ Comparison with the MagicDec paper (PG-19, 32k, Llama-3.1-8B):
 - Our τ is 5–10% higher than the paper's Ω.
 - The paper's large speedups (2.0–2.5×) are at B64–128 and 64k–100k context. Its Table 3(c) uses **8×A100**, so the new server allows a direct comparison.
 
+## Story / framing for the coursework talk (user decision 2026-11-18)
+
+- Theory: `experiments/28_sd_theory/breakeven.py` → `results/E7/sd_theory_speedup_vs_c_alpha.png`, `sd_theory_tables.md`. S = max_γ τ/(γc+v), break-even α ≈ c, ceiling 1/c.
+- **Framing:** a self-spec draft reads the full weights + all_reduce, so c has a floor (~0.43 at B16×32k TP4). The gain has to come from acceptance α. Eviction drafts lose α on hard / far-context tasks, VQ-KV drafts keep it → VQ wins there. Lowering draft weights too is out of scope (not a fair MagicDec comparison).
+- **Caveat to measure:** the 2-bit VQ draft reads ~1/8 of the target KV, which grows with ctx, while SnapKV's budget is fixed. Per rank at B16 TP4: 32k ≈ 2 GB for both, 64k VQ ≈ 4 GB, 128k ≈ 8 GB. So c_VQ − c_SnapKV widens at 64k/128k, and VQ must win more α. The A100 runs test this trade-off (hybrid / 1-bit matter here).
+- Always show the loss cases too (PG-19: SnapKV wins) so the task-dependent boundary is visible.
+- **Planned figure (no GPU needed):** per-task points for SnapKV vs VQ/hybrid on the c–α theory map (measured c from step timing, α from τ), arrows SnapKV→VQ, from v4b/v5/v6 data.
+
 ## Setup on the new server
 
 ```bash
@@ -93,6 +101,7 @@ Steps:
 ## Working rules carried over (from the user)
 
 - **Language:** reply to the user in Korean.
+- **Memory:** the Claude memory of the original server does not travel with git; the rules it held are copied into this section. Re-save the important ones in the new server's memory.
 - **Roles:** the main session is supervisor. Executors implement and run, and they don't commit. The supervisor verifies, commits specific paths only (never `git add -a`), updates Notion 05, and reports.
 - **Commit trailer:** end commit messages with the attribution lines your harness specifies.
 - **Timing:** speed is measured only on GPUs with no other process. Record the check in each JSON.
