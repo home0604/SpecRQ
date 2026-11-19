@@ -1,5 +1,5 @@
 """Summarize Nsight Compute reports of ncu_point.py runs into a markdown table.
-Usage: python ncu_summary.py <dir with *.ncu-rep> <out.md>"""
+Usage: python ncu_summary.py <dir with *.ncu-rep> <out.md> [title]"""
 import csv
 import io
 import subprocess
@@ -41,7 +41,8 @@ for f in sorted(Path(sys.argv[1]).glob("*.ncu-rep")):
                  and v[i].replace(",", "").replace(".", "").isdigit()), key=lambda x: -x[1])
     st = [x for x in st if x[0] not in ("selected", "not_selected")][:4]
     rows.append((f.stem, vals, st))
-out = ["# E10 phase 0: Nsight Compute on representative points (RTX 4090, ncu 2023 / CUDA 12.1, --set full)\n",
+TITLE = sys.argv[3] if len(sys.argv) > 3 else "E10 phase 0"
+out = [f"# {TITLE}: Nsight Compute on representative points (RTX 4090, ncu 2023 / CUDA 12.1, --set full)\n",
        "Point name = k{KST}_n{tokens}_bh{B*Hkv}_c{chunk}; single launch (ncu serializes and flushes caches, so times "
        "differ from the graph-timed sweep).\n",
        "| point | " + " | ".join(m[0] for m in M) + " | top stalls (cycles per issued inst) |",
