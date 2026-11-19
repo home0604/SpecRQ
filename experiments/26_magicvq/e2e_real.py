@@ -63,7 +63,10 @@ HID, D, NL, HQA, HKVA, INTER, VOCAB, EPS = 4096, 128, 32, 32, 8, 14336, 128256, 
 EOS = {128001, 128008, 128009}
 SINKS, WIN = 16, 32
 RANK, WORLD = 0, 1
+LEGACY_T = False  # --legacy_T (reproduce the pre-fix cache length)
 SOFT_REP = False  # v7: --soft_rep_check
+HEADN = 32  # rep-mismatch fix: first HEADN cache positions of every (layer, k/v, seq, kv-head) are snapshotted after
+#             prefill and compared after every config (an out-of-range append wraps into the next head's sinks)
 
 
 def log(*a):
@@ -641,6 +644,14 @@ def run_spec(m, st, draft, gamma, reps, modes=("static",)):
                 break
         torch.cuda.synchronize()
         wall = gmax_time(time.perf_counter() - t0)
+        # rep-mismatch fix guard: the last draft / verify of a row wrote positions up to length + gamma (static mode:
+        # frozen rows keep running draft + verify at their final length until the slowest row is done)
+        mx = int(st.length.max().item()) + gamma
+        if mx >= st.T:
+            R_ = res[mode]
+            R_.setdefault("cache_overflow", []).append({"rep": rep, "max_pos": mx, "T": st.T})
+            log(f"  WARNING cache overflow: wrote position {mx} >= T={st.T} (rep {rep}, {mode})")
+            assert LEGACY_T, "cache overflow with the fixed T"
         seg = [sum(a.elapsed_time(b) for a, b in ((x[i], x[i + 1]) for x in evs)) / 1e3 for i in range(4)]
         R = res[mode]
         ngen = st.ngen.clone()
@@ -677,6 +688,9 @@ def run_spec(m, st, draft, gamma, reps, modes=("static",)):
                               "host_s": wall - sum(seg)})
     del g_d, g_v, g_as, g_a, g_e
     base = {"draft_plan": dplan, "draft_tune": dtune, "verify_plan": vplan, "verify_tune": vtune}
+    for mode in modes:
+        if "cache_overflow" in res[mode]:
+            base.setdefault("cache_overflow", {})[mode] = res[mode]["cache_overflow"]
     if "static" in res:
         base["runs"] = res["static"]["runs"]
         if "rep_out_differs" in res["static"]:
@@ -697,7 +711,7 @@ def run_spec(m, st, draft, gamma, reps, modes=("static",)):
 
 # ------------------------------------------------------------------------------------------------------------- main
 def main():
-    global RANK, WORLD, SOFT_REP
+    global RANK, WORLD, SOFT_REP, LEGACY_T
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
     ap.add_argument("--ctx", type=int, required=True)
@@ -715,8 +729,12 @@ def main():
                     help="batch accounting of the spec loop (both = interleaved reps in one run, shared graphs / AR)")
     ap.add_argument("--soft_rep_check", action="store_true",
                     help="v7: record (rep_out_differs) instead of aborting when a rep's spec output differs from rep 0")
+    ap.add_argument("--legacy_T", action="store_true",
+                    help="reproduce the pre-fix cache length T = ceil64(Pmax + gen + gmax + 2) (static-mode frozen rows "
+                         "then write up to Pmax + gen + 2 gamma >= T at gamma 6 -> wrap into the next head's sinks)")
     a = ap.parse_args()
     SOFT_REP = a.soft_rep_check
+    LEGACY_T = a.legacy_T
     torch.set_grad_enabled(False)
     dist.init_process_group("nccl")
     RANK, WORLD = dist.get_rank(), dist.get_world_size()
@@ -737,7 +755,11 @@ def main():
     gammas = [int(c.split(":")[1]) for c in a.configs if c != "ar"]
     gmax = max(gammas + [1])
     P_list = [p["P"] for p in prompts]
-    T = -(-(max(P_list) + a.gen + gmax + 2) // 64) * 64
+    # rep-mismatch fix: in static accounting a row frozen at ngen <= gen + gamma keeps running draft + verify (writes
+    # at length .. length + gamma) until the slowest row finishes -> max position P + gen + 2 gamma. The old bound
+    # (gen + gmax + 2) let gamma >= 3 rows write past T into the next (seq, kv-head)'s first positions (attention
+    # sinks / BOS) of the target cache, persisting for the rest of the process.
+    T = -(-(max(P_list) + a.gen + (gmax if a.legacy_T else 2 * gmax) + 2) // 64) * 64
     st = State(m, a.B, T, a.gen, gmax)
     log(f"target cache T={T}: {st.tc.numel() * 2 / 2**30:.2f} GiB, free {torch.cuda.mem_get_info()[0] / 2**30:.2f} GiB")
     # ---- prefill
@@ -754,6 +776,18 @@ def main():
         pf.append(gmax_time(time.perf_counter() - t1))
         torch.cuda.empty_cache()
     st.set_prompts(P_list, g0)
+    head0 = st.tc[:, :, :, :, :HEADN].clone()  # rep-mismatch fix: prompt-head integrity reference
+
+    def head_changed():
+        ch = (st.tc[:, :, :, :, :HEADN] != head0).any(-1)  # [L, 2, B, Hkv, HEADN]
+        n = torch.tensor([int(ch.any(-1).sum())], device="cuda")
+        dist.all_reduce(n)
+        rows = ch.any(-1).any(-1).any(0).any(0).int()  # [B]
+        dist.all_reduce(rows)
+        pos = ch.any(0).any(0).any(0).any(0).int()
+        dist.all_reduce(pos)
+        return {"n_heads_changed": int(n.item()), "rows": [b for b, x in enumerate(rows.tolist()) if x],
+                "positions": [p for p, x in enumerate(pos.tolist()) if x]}
     rec["prefill"] = {"total_s": sum(pf), "per_seq_s": pf, "P": P_list,
                       "peak_GiB": torch.cuda.max_memory_allocated() / 2**30}
     log(f"prefill {sum(pf):.1f}s (per seq {statistics.median(pf):.2f}s), peak {rec['prefill']['peak_GiB']:.2f} GiB")
@@ -777,6 +811,7 @@ def main():
             r["out"] = out.tolist()
             rec["configs"]["ar"] = r
             r["co_before"], r["co_after"] = co_b, cocheck(own) if RANK == 0 else None
+            r["prompt_head_after"] = head_changed()
             log(f"[ar] {statistics.median(x['tok_per_s'] for x in r['runs']):.1f} tok/s, step {r['step_ms']:.2f} ms")
         else:
             name, g = c.split(":")
@@ -809,6 +844,9 @@ def main():
             r["peak_GiB"] = torch.cuda.max_memory_allocated() / 2**30
             rec["configs"][c] = r
             r["co_before"], r["co_after"] = co_b, cocheck(own) if RANK == 0 else None
+            r["prompt_head_after"] = hc = head_changed()
+            if hc["n_heads_changed"]:
+                log(f"  WARNING prompt-head cache changed after {c}: {hc}")
             d.free()
             del d
             rr = r.get("runs") or r["all_active"]["runs"]

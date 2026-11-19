@@ -51,7 +51,7 @@ Comparison with the MagicDec paper (PG-19, 32k, Llama-3.1-8B):
 - Our τ is 5–10% higher than the paper's Ω.
 - The paper's large speedups (2.0–2.5×) are at B64–128 and 64k–100k context. Its Table 3(c) uses **8×A100**, so the new server allows a direct comparison.
 
-- Open issue: at γ6 some configs (VQ/hybrid and once SnapKV, never AR) give outputs that differ between the warm-up rep and timed reps (near-tie tokens); recorded via `--soft_rep_check`. Not investigated.
+- RESOLVED 2026-11-19 (was the γ6 rep mismatch): target KV cache overflow in `e2e_real.py`. Static-accounting frozen rows kept appending up to P+gen+2γ, but T was ceil64(Pmax+gen+γ+2). At the 16k LongBench points with γ6 the writes spilled into the next head's BOS/sink positions and stayed corrupted for the rest of the process. Fix: T margin 2γ, an overflow assert, a prompt-head integrity check, and `--legacy_T` to reproduce. Contaminated: v7 gov16/qmsum/repobench/hotpotqa-g6, v7mse hotpotqa, v8 gov16/hotpotqa(e2ea). Corrected numbers are in `results/E7/llama8b_magicvq_repmismatch_tables.md`; that file supersedes those rows. 32k points, v5/v5aa/v6e2e and the τ pipeline are unaffected. Residual: changing T alone moved SnapKV-2048 hotpotqa τ by about 3% (a different greedy trajectory from a different verify split plan), so treat 16k ratios as ±3%.
 
 ## Story / framing for the coursework talk (user decision 2026-11-18)
 
