@@ -729,10 +729,14 @@ def main():
                     help="batch accounting of the spec loop (both = interleaved reps in one run, shared graphs / AR)")
     ap.add_argument("--soft_rep_check", action="store_true",
                     help="v7: record (rep_out_differs) instead of aborting when a rep's spec output differs from rep 0")
+    ap.add_argument("--lazy_max", action="store_true",
+                    help="E10: lazy online max in the VQ LUT kernel (exact; same as MV_LUT_LAZY=1); default off")
     ap.add_argument("--legacy_T", action="store_true",
                     help="reproduce the pre-fix cache length T = ceil64(Pmax + gen + gmax + 2) (static-mode frozen rows "
                          "then write up to Pmax + gen + 2 gamma >= T at gamma 6 -> wrap into the next head's sinks)")
     a = ap.parse_args()
+    if a.lazy_max:
+        EK.LAZY_MAX = True
     SOFT_REP = a.soft_rep_check
     LEGACY_T = a.legacy_T
     torch.set_grad_enabled(False)
@@ -745,6 +749,7 @@ def main():
     cot = lambda: [c for c in cotenants() if c[0] not in own]  # noqa: E731
     rec = {"args": vars(a), "world": WORLD, "nvsmi_apps_start": nvsmi_apps(), "cotenants_start": cot(),
            "co_start": cocheck(own)}
+    rec["lut_lazy_max"] = EK.LAZY_MAX
     log("co-tenants at start:", rec["cotenants_start"] or "none")
     prompts = json.load(open(f"{OUT}/prompts_{a.task}_ctx{a.ctx}.json"))[a.skip:a.skip + a.B]
     assert len(prompts) == a.B, len(prompts)

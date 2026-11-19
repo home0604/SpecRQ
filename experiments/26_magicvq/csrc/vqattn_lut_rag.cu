@@ -8,7 +8,12 @@
 //     V_hat = sdv * sum_s cb_s + muv, folded exactly: q' = q * sdk for the LUT, score offset q . muk added to the
 //     partial max, O = sdv * O' + muv * l at the partial store;
 //   * partials written at split offset OFF of a shared workspace with SPT splits per (b, kv-head), so a bf16 partial
-//     kernel can write the other splits and one combine merges both sets.
+//     kernel can write the other splits and one combine merges both sets;
+//   * LAZY (runtime flag lazy=1, E10 phase 1 knob SB2): lazy online max. The per-row reference max is set by the first
+//     tile and raised (warp max shuffle + acc / l rescale) only when a warp vote finds a score > reference + 8 (log2
+//     units); otherwise p = exp2(s - ref) without shuffles, and l is kept per lane and reduced after the loop. Exact up
+//     to fp32 (p <= 2^8). MP then holds the reference, not the true max; the combine is a generic LSE merge, so the
+//     result is the same. lazy=0 (default) is the original online-max path.
 #include <torch/extension.h>
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
@@ -66,7 +71,7 @@ __device__ __forceinline__ void add_lut4(float* sc, const __half* e) {
   sc[0] += a.x; sc[1] += a.y; sc[2] += b.x; sc[3] += b.y;
 }
 
-template <int KST>
+template <int KST, bool LAZY>
 __global__ void __launch_bounds__(NW * 32) lut_rag_kernel(
     const __nv_bfloat16* __restrict__ qkv, KVP P, const float* __restrict__ invf, float* __restrict__ OP,
     float* __restrict__ MP, float* __restrict__ LP, const int* __restrict__ LO, const int* __restrict__ HI,
@@ -170,6 +175,31 @@ __global__ void __launch_bounds__(NW * 32) lut_rag_kernel(
       }
     }
     float alpha[GM];
+    if constexpr (LAZY) {
+      bool need = false;
+#pragma unroll
+      for (int r = 0; r < GM; ++r) need |= ok && sc[r] > mrow[r] + 8.f;  // first tile: mrow = -inf -> always
+      if (__any_sync(0xffffffff, need)) {
+#pragma unroll
+        for (int r = 0; r < GM; ++r) {
+          float mx = ok ? sc[r] : -INFINITY;
+#pragma unroll
+          for (int o = 16; o; o >>= 1) mx = fmaxf(mx, __shfl_xor_sync(0xffffffff, mx, o));
+          const float mn = fmaxf(mrow[r], mx);
+          const float al = exp2f(mrow[r] - mn);  // mrow = -inf -> 0 (lrow, acc are 0 then)
+          lrow[r] *= al;
+#pragma unroll
+          for (int i = 0; i < 8; ++i) acc[r][i] *= al;
+          mrow[r] = mn;
+        }
+      }
+#pragma unroll
+      for (int r = 0; r < GM; ++r) {
+        const float p = ok ? exp2f(sc[r] - mrow[r]) : 0.f;
+        sPw[lane * GM + r] = p;
+        lrow[r] += p;  // per-lane partial; reduced across the warp after the loop
+      }
+    } else
 #pragma unroll
     for (int r = 0; r < GM; ++r) {
       float v = ok ? sc[r] : -INFINITY;
@@ -188,6 +218,7 @@ __global__ void __launch_bounds__(NW * 32) lut_rag_kernel(
       mrow[r] = mn;
     }
     __syncwarp();
+    if constexpr (!LAZY)
 #pragma unroll
     for (int r = 0; r < GM; ++r)
 #pragma unroll
@@ -215,6 +246,14 @@ __global__ void __launch_bounds__(NW * 32) lut_rag_kernel(
   for (int r = 0; r < GM; ++r)
 #pragma unroll
     for (int i = 0; i < 8; ++i) acc[r][i] += __shfl_xor_sync(0xffffffff, acc[r][i], 16);
+  if constexpr (LAZY) {
+#pragma unroll
+    for (int r = 0; r < GM; ++r) {
+#pragma unroll
+      for (int o = 16; o; o >>= 1) lrow[r] += __shfl_xor_sync(0xffffffff, lrow[r], o);
+      if (lrow[r] == 0.f) mrow[r] = -INFINITY;  // no token in this warp's range (as the online-max path)
+    }
+  }
   if (tp == 0) {
     const float* sv = SDV + h * D + dg * 8;
     const float* mv = MUV + h * D + dg * 8;
@@ -237,14 +276,14 @@ __global__ void __launch_bounds__(NW * 32) lut_rag_kernel(
   }
 }
 
-template <int KST>
+template <int KST, bool LAZY>
 void launch(torch::Tensor qkv, const KVP& P, torch::Tensor invf, torch::Tensor OP, torch::Tensor MP, torch::Tensor LP,
             torch::Tensor LO, torch::Tensor HI, torch::Tensor QPOS, torch::Tensor SDK, torch::Tensor MUK,
             torch::Tensor SDV, torch::Tensor MUV, int chunk, int splits, int B, int Hkv, int BM, int SPT, int OFF,
             float qk_scale) {
   using L = Lay<KST>;
   static_assert(L::total <= 101376, "smem");
-  auto k = lut_rag_kernel<KST>;
+  auto k = lut_rag_kernel<KST, LAZY>;
   static bool set = false;
   if (!set) {
     TORCH_CHECK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, L::total) == cudaSuccess, "smem");
@@ -265,7 +304,8 @@ void lut_rag(torch::Tensor qkv, std::vector<torch::Tensor> kpl, std::vector<torc
              std::vector<torch::Tensor> kcb, std::vector<torch::Tensor> vcb, torch::Tensor invf, torch::Tensor OP,
              torch::Tensor MP, torch::Tensor LP, torch::Tensor LO, torch::Tensor HI, torch::Tensor QPOS,
              torch::Tensor SDK, torch::Tensor MUK, torch::Tensor SDV, torch::Tensor MUV, int64_t chunk, int64_t splits,
-             int64_t B, int64_t Hkv, int64_t BM, int64_t SPT, int64_t OFF, int64_t kst, double qk_scale) {
+             int64_t B, int64_t Hkv, int64_t BM, int64_t SPT, int64_t OFF, int64_t kst, double qk_scale,
+             int64_t lazy) {
   KVP P{};
   TORCH_CHECK(kst == 1 || kst == 2, "kst");
   for (int s = 0; s < kst; ++s) {
@@ -282,13 +322,22 @@ void lut_rag(torch::Tensor qkv, std::vector<torch::Tensor> kpl, std::vector<torc
   P.sh = kpl[0].stride(1);
   P.cbh = kcb[0].stride(0);
   TORCH_CHECK(LO.dtype() == torch::kInt32 && HI.dtype() == torch::kInt32 && QPOS.dtype() == torch::kInt32, "int32");
-  if (kst == 1)
-    launch<1>(qkv, P, invf, OP, MP, LP, LO, HI, QPOS, SDK, MUK, SDV, MUV, chunk, splits, B, Hkv, BM, SPT, OFF,
-              qk_scale);
-  else
-    launch<2>(qkv, P, invf, OP, MP, LP, LO, HI, QPOS, SDK, MUK, SDV, MUV, chunk, splits, B, Hkv, BM, SPT, OFF,
-              qk_scale);
+#define LR_LAUNCH(K, Z) \
+  launch<K, Z>(qkv, P, invf, OP, MP, LP, LO, HI, QPOS, SDK, MUK, SDV, MUV, chunk, splits, B, Hkv, BM, SPT, OFF, qk_scale)
+  if (kst == 1) {
+    if (lazy) LR_LAUNCH(1, true); else LR_LAUNCH(1, false);
+  } else {
+    if (lazy) LR_LAUNCH(2, true); else LR_LAUNCH(2, false);
+  }
+#undef LR_LAUNCH
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) { m.def("lut_rag", &lut_rag); }
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def("lut_rag", &lut_rag, pybind11::arg("qkv"), pybind11::arg("kpl"), pybind11::arg("vpl"), pybind11::arg("kcb"),
+        pybind11::arg("vcb"), pybind11::arg("invf"), pybind11::arg("OP"), pybind11::arg("MP"), pybind11::arg("LP"),
+        pybind11::arg("LO"), pybind11::arg("HI"), pybind11::arg("QPOS"), pybind11::arg("SDK"), pybind11::arg("MUK"),
+        pybind11::arg("SDV"), pybind11::arg("MUV"), pybind11::arg("chunk"), pybind11::arg("splits"), pybind11::arg("B"),
+        pybind11::arg("Hkv"), pybind11::arg("BM"), pybind11::arg("SPT"), pybind11::arg("OFF"), pybind11::arg("kst"),
+        pybind11::arg("qk_scale"), pybind11::arg("lazy") = 0);
+}

@@ -79,9 +79,10 @@ def check_bf(M, use_idx):
     assert err < 0.03
 
 
-def check_vq_and_encode(S=2):
+def check_vq_and_encode(S=2, lazy=0, qscale=1.0):
     """S = 1: one-stage (1-bit) codes / LUT kernel template KST = 1 (v8)."""
     print(f"-- VQ stages S = {S}")
+    torch.manual_seed(100 + S)  # same data for the lazy / online-max pair
     kvc = torch.randn(2, B, Hkv, T, D, device=dev).to(torch.bfloat16)
     cb = torch.randn(2, Hkv, S, 256, 8, device=dev) * torch.tensor([1.0, 0.4], device=dev)[None, None, :S, None, None]
     mu = torch.randn(2, Hkv, D, device=dev) * 0.3
@@ -127,7 +128,7 @@ def check_vq_and_encode(S=2):
     assert frac > 0.9999
     # VQ partial (LUT) over [LO, HI) per (b, h) + bf16 sinks, vs dequantized reference
     M = 1
-    qkv = torch.randn(B, (Hq + 2 * Hkv) * D, device=dev).to(torch.bfloat16)
+    qkv = (torch.randn(B, (Hq + 2 * Hkv) * D, device=dev) * qscale).to(torch.bfloat16)  # large qscale: many rescales
     qpos = torch.tensor([660, 640, 690], device=dev, dtype=torch.int32)[:B]
     vlo = torch.tensor([16, 16, 20, 16, 16, 16], device=dev, dtype=torch.int32)[:B * Hkv]
     vhi = torch.tensor([500, 500, 300, 290, 640, 600], device=dev, dtype=torch.int32)[:B * Hkv]
@@ -145,7 +146,7 @@ def check_vq_and_encode(S=2):
     EK.lut_partial(qkv, [codes[0, s] for s in range(S)], [codes[1, s] for s in range(S)],
                    [cbb[0, :, s] for s in range(S)], [cbb[1, :, s] for s in range(S)], inv, ws, spt, bf_sp, vq_sp,
                    vq_ch, vlo, vhi, qpos, sd[0].contiguous(), mu[0].contiguous(), sd[1].contiguous(),
-                   mu[1].contiguous(), B, Hkv, S)
+                   mu[1].contiguous(), B, Hkv, S, lazy=lazy)
     EK.combine(ws, spt, out, B, Hkv, G, 1)
     err = 0
     q = qkv[:, :Hq * D].float().view(B, Hkv, G, D)
@@ -165,8 +166,9 @@ def check_vq_and_encode(S=2):
             r = ref_attn(qr, K, V)
             o = out.view(B, Hkv, G, D)[b, h].float()
             err = max(err, (o - r).abs().max().item())
-    print(f"lut_partial + bf16 sinks/window + combine: max abs err {err:.4f}")
-    assert err < 0.05
+    print(f"lut_partial (S={S} lazy={lazy} qscale={qscale}) + bf16 sinks/window + combine: max abs err {err:.4f}")
+    assert err < 0.05 or qscale != 1.0  # qscale > 1: fp16 LUT score error scales too; only lazy-vs-online compared
+    return out
 
 
 if __name__ == "__main__":
@@ -174,6 +176,11 @@ if __name__ == "__main__":
         check_bf(M, False)
     check_bf(1, True)
     check_bf(3, True)
-    check_vq_and_encode(2)
-    check_vq_and_encode(1)
+    for S in (2, 1):
+        for qs in (1.0, 4.0):
+            o0 = check_vq_and_encode(S, 0, qs)
+            o1 = check_vq_and_encode(S, 1, qs)
+            d = (o0.float() - o1.float()).abs().max().item()
+            print(f"  lazy vs online max (S={S} qscale={qs}): max abs diff {d:.5f}")
+            assert d < 0.02
     print("ALL OK")

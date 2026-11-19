@@ -239,13 +239,18 @@ def ext():
     return _EXT
 
 
+# E10 phase 1 lazy online max in the VQ LUT kernel (exact; rescale only when a score exceeds the reference by > 8).
+# Off by default (original online-max path); e2e_real --lazy_max or MV_LUT_LAZY=1 turns it on.
+LAZY_MAX = os.environ.get("MV_LUT_LAZY", "0") == "1"
+
+
 def lut_partial(qkv, planes_k, planes_v, cbk, cbv, inv, ws, spt, off, splits, chunk, lo, hi, qpos, sdk, muk, sdv, muv,
-                B, Hkv, kst):
+                B, Hkv, kst, lazy=None):
     """VQ partials: writes splits * 16 slots at `off`. planes [B, Hkv, T, 16]; cb bf16 [Hkv, 256, 8] per stage;
     lo / hi int32 [B*Hkv] (token index range of the planes); qpos int32 [B]; sd / mu fp32 [Hkv, 128]."""
     OP, MP, LP, BM = ws
     ext().lut_rag(qkv, planes_k, planes_v, cbk, cbv, inv, OP, MP, LP, lo, hi, qpos, sdk, muk, sdv, muv, chunk, splits,
-                  B, Hkv, BM, spt, off, kst, D_SCALE)
+                  B, Hkv, BM, spt, off, kst, D_SCALE, int(LAZY_MAX if lazy is None else lazy))
 
 
 D_SCALE = 128 ** -0.5 * LOG2E
