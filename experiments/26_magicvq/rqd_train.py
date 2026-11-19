@@ -23,6 +23,12 @@ the relative reconstruction error of the VQ-coded K and V in the original (de-st
 codebook file (level / R as given); writes <CBDIR>/rqd_eval_<eval_tag>.json.
 --nest W (v8, level 2, tag t12w): nested-prefix objective W * attn_loss(stage 1 only) + attn_loss(stages 1+2), so one
 codebook serves the 1-bit prefix draft and the 2-bit draft (held-out rule on the same combined ratio).
+v9: --init PATH (warm start from a trained codebook, e.g. t2w, incl. its mu / sd), --freeze_s1 (stage 1 and mu / sd
+frozen at the init, e.g. t1w; only stage 2 trained, = dedicated prefix + residual), --layer_list (pilot subsets),
+--nest_norm (nested terms divided by their init held-out values, so W is a relative priority); nested runs log the
+held-out L1 and L2 losses separately (heldout_L1L2_before / _after; with --nest_lag a 3rd entry = reference L1).
+--nest_lag EPS: minimise L2 s.t. L1 <= (1 + EPS) L1_ref, L1_ref = stage-1 loss of --lag_ref (t1w) on the same batch;
+W (start --nest) is a Lagrange multiplier, W <- max(0, W + lag_eta (EMA_0.9(L1 / L1_ref) - 1 - EPS)) per step.
 Usage: python experiments/26_magicvq/rqd_train.py --level 1 --R 128 --tag t1w --layers 0 8   (then --merge)
 """
 import argparse
@@ -61,17 +67,17 @@ def load_wo(l):
 class Q:
     """trainable 'p'-format quantizer of one (layer, K/V)."""
 
-    def __init__(self, cbs, mu, sd, level, train_stats=True):
+    def __init__(self, cbs, mu, sd, level, train_stats=True, freeze_s1=False):
         self.level = level
-        self.cb = [torch.nn.Parameter(c.cuda().float().clone()) if s < level else c.cuda().float()
-                   for s, c in enumerate(cbs)]
+        self.cb = [torch.nn.Parameter(c.cuda().float().clone()) if s < level and not (freeze_s1 and s == 0)
+                   else c.cuda().float() for s, c in enumerate(cbs)]
         self.mu0, self.sd0 = mu.cuda().float(), sd.cuda().float()
         self.dmu = torch.nn.Parameter(torch.zeros_like(self.mu0))
         self.lsd = torch.nn.Parameter(torch.zeros_like(self.sd0))
         self.train_stats = train_stats
 
     def params(self):
-        return [c for c in self.cb[:self.level]] + ([self.dmu, self.lsd] if self.train_stats else [])
+        return [c for c in self.cb[:self.level] if isinstance(c, torch.nn.Parameter)] + ([self.dmu, self.lsd] if self.train_stats else [])
 
     def stats(self):
         return self.mu0 + self.sd0 * self.dmu, self.sd0 * self.lsd.exp()
@@ -148,7 +154,7 @@ def mse_err(qpos, K, V, Kh, Vh, R):
     return eK + eV, eK.detach(), eV.detach()
 
 
-def run_layer(l, a, meta, base, cos, sin, log):
+def run_layer(l, a, meta, base, cos, sin, log, lag_ref=None):
     Wo = load_wo(l).cuda().float()
     data = []
     for s in meta["seqs"]:
@@ -156,7 +162,8 @@ def run_layer(l, a, meta, base, cos, sin, log):
         data.append({k: v.cuda() for k, v in x.items()})
     ho = set(a.heldout)
     tr = [i for i in range(len(data)) if i not in ho]
-    qs = [Q(base["cb"][l][kv], base["mu"][l][kv], base["sd"][l][kv], a.level, not a.no_stats) for kv in range(2)]
+    qs = [Q(base["cb"][l][kv], base["mu"][l][kv], base["sd"][l][kv], a.level, not (a.no_stats or a.freeze_s1),
+            a.freeze_s1) for kv in range(2)]
     params = qs[0].params() + qs[1].params()
     opt = torch.optim.Adam(params, lr=a.lr)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda it: 0.5 * (1 + math.cos(math.pi * min(it, a.steps) / a.steps)))
@@ -176,11 +183,19 @@ def run_layer(l, a, meta, base, cos, sin, log):
             if a.nest is not None:  # v8: nested prefix loss  w * attn(stage 1) + attn(stages 1+2)  (same den)
                 Ks, Vs = qs[0](K, True), qs[1](V, True)
                 tot = 0.0
+                terms.clear()
                 for s_, (Kh, Vh) in enumerate(zip(Ks, Vs)):
                     Kh = torch.cat([K[:SINKS], Kh[SINKS:]])
                     Vh = torch.cat([V[:SINKS], Vh[SINKS:]])
                     n_, d_ = attn_err(q, qp, K, V, Kh, Vh, a.R, Wo)
-                    tot = tot + (a.nest if s_ == 0 else 1.0) * n_
+                    terms.append(n_.detach())
+                    tot = tot + (wl[0] if s_ == 0 else 1.0) * n_ / ref[s_]  # v9 --nest_norm: ref = init held-out
+                if qref is not None:  # v9 --nest_lag: stage-1 loss of the reference (t1w) codebook on the same batch
+                    with torch.no_grad():
+                        Kr, Vr = qref[0](K), qref[1](V)
+                        Kr = torch.cat([K[:SINKS], Kr[SINKS:]])
+                        Vr = torch.cat([V[:SINKS], Vr[SINKS:]])
+                        terms.append(attn_err(q, qp, K, V, Kr, Vr, a.R, Wo)[0])
                 return tot, d_
             Kh, Vh = qs[0](K), qs[1](V)
             Kh = torch.cat([K[:SINKS], Kh[SINKS:]])
@@ -189,19 +204,36 @@ def run_layer(l, a, meta, base, cos, sin, log):
                 return mse_err(x["qpos"], K, V, Kh, Vh, a.R)[0], torch.ones((), device="cuda")
             return attn_err(q, qp, K, V, Kh, Vh, a.R, Wo)
 
-    def heldout():
+    terms = []  # nested: per-level numerators of the last loss_on call (stage 1, stages 1+2[, reference stage 1])
+    wl = [a.nest]  # nested: current stage-1 weight (fixed, or the Lagrange multiplier under --nest_lag)
+    qref = None
+    if a.nest_lag is not None:  # v9: min L2 s.t. L1 <= L1_ref (1 + eps); W <- max(0, W + eta (EMA(L1 / L1_ref) - 1 - eps))
+        qref = [Q(lag_ref["cb"][l][kv], lag_ref["mu"][l][kv], lag_ref["sd"][l][kv], 1, False) for kv in range(2)]
+        rbar = None
+    ref = [1.0, 1.0]  # nested: per-term normalisers (raw objective: 1)
+    split = {}
+
+    def heldout(key=None):
         torch.backends.cuda.matmul.allow_tf32 = False
         num = den = 0.0
+        tn = [0.0, 0.0, 0.0]
         with torch.no_grad():
             for i in sorted(ho):
                 n_, d_ = loss_on(i, a.eval_off, grad=False)
                 num += n_.item(); den += d_.item()
+                for k_, t_ in enumerate(terms):
+                    tn[k_] += t_.item()
         torch.backends.cuda.matmul.allow_tf32 = a.tf32
+        if key and a.nest is not None:  # v9: separate held-out L1 / L2 attention loss
+            split[key] = [tn[0] / den, tn[1] / den] + ([tn[2] / den] if qref is not None else [])
         return num / den
 
     t0 = time.time()
     init = [p.detach().clone() for p in params]
-    before = heldout()
+    before = heldout("before")
+    if a.nest is not None and a.nest_norm:  # v9: W * L1 / L1_init + L2 / L2_init (W = relative priority)
+        ref[0], ref[1] = split["before"]
+        before = a.nest + 1.0
     hist = []
     for it in range(a.steps):
         i = tr[int(torch.randint(0, len(tr), (1,), generator=gen))]
@@ -214,16 +246,24 @@ def run_layer(l, a, meta, base, cos, sin, log):
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step(); sched.step()
+        if qref is not None:
+            r_ = (terms[0] / terms[2]).item()
+            rbar = r_ if rbar is None else 0.9 * rbar + 0.1 * r_
+            wl[0] = max(0.0, wl[0] + a.lag_eta * (rbar - 1 - a.nest_lag))
         if it % 50 == 0 or it == a.steps - 1:
-            hist.append((it, round(loss.item(), 5)))
-    after = heldout()
+            hist.append((it, round(loss.item(), 5)) + ((round(wl[0], 4), round(rbar, 4)) if qref is not None else ()))
+    after = heldout("after")
     keep = after < before
+    if qref is not None:  # lag: keep unless held-out L2 got > 1 % worse, or L1 got worse without an L2 gain
+        (b1, b2), (a1, a2) = split["before"][:2], split["after"][:2]
+        keep = (a2 <= 1.01 * b2 and a1 < b1) or (a2 < b2 and a1 <= b1)
     if not keep:
         with torch.no_grad():
             for p, p0 in zip(params, init):
                 p.copy_(p0)
     out = [qq.export() for qq in qs]
-    rec = {"layer": l, "heldout_before": before, "heldout_after": after, "kept": keep, "hist": hist,
+    rec = {"layer": l, "heldout_before": before, "heldout_after": after, "kept": keep, "hist": hist, "W_final": wl[0],
+           **({"heldout_L1L2_before": split["before"], "heldout_L1L2_after": split["after"]} if split else {}),
            "s": time.time() - t0}
     log(rec)
     torch.save({"layer": l, "kv": out, "rec": rec}, f"{TRAIN}/{a.tag}/L{l}.pt")
@@ -276,6 +316,8 @@ def merge(a):
                                                           "per_layer": recs}})
     if a.nest is not None:
         st["trained"]["nest"] = a.nest
+    if a.init or a.freeze_s1:
+        st["trained"].update(init=a.init, freeze_s1=a.freeze_s1)
     torch.save(st, f"{CBDIR}/cb_d8K256x2_post_cn_{a.tag}.pt")
     json.dump({"args": vars(a), "per_layer": recs,
                "mean_before": sum(r["heldout_before"] for r in recs) / 32,
@@ -304,6 +346,15 @@ def main():
     ap.add_argument("--loss", default="attn", choices=["attn", "mse"], help="v7: mse = K/V reconstruction control")
     ap.add_argument("--nest", type=float, default=None, metavar="W",
                     help="v8: nested prefix training (level 2): loss = W * attn(stage 1) + attn(stages 1+2)")
+    ap.add_argument("--init", default=None, help="v9: start codebook file (default: greedy 'p' BASE), e.g. t2w warm start")
+    ap.add_argument("--freeze_s1", action="store_true", help="v9: stage 1 and mu / sd frozen (train stage 2 only)")
+    ap.add_argument("--layer_list", type=int, nargs="*", default=None, help="v9: explicit layers (overrides --layers)")
+    ap.add_argument("--nest_norm", action="store_true",
+                    help="v9: normalise the nested terms by their init held-out values: W * L1/L1_0 + L2/L2_0")
+    ap.add_argument("--nest_lag", type=float, default=None, metavar="EPS",
+                    help="v9: constrained nested training, --nest = initial W (Lagrange multiplier)")
+    ap.add_argument("--lag_eta", type=float, default=0.1)
+    ap.add_argument("--lag_ref", default=f"{CBDIR}/cb_d8K256x2_post_cn_t1w.pt", help="v9: L1 reference codebook")
     ap.add_argument("--eval_cb", nargs="*", default=None, metavar="TAG=PATH", help="diagnostic held-out eval only")
     a = ap.parse_args()
     meta = json.load(open(f"{ACTS}/meta.json"))
@@ -318,7 +369,7 @@ def main():
         rp = torch.load(f"{ACTS}/rope.pt")
         cos, sin = rp["cos"].cuda(), rp["sin"].cuda()
         cbs = {t: torch.load(p, weights_only=False) for t, p in (x.split("=", 1) for x in a.eval_cb)}
-        res = {l: eval_layer(l, a, meta, cbs, cos, sin) for l in range(*a.layers)}
+        res = {l: eval_layer(l, a, meta, cbs, cos, sin) for l in (a.layer_list or range(*a.layers))}
         mean = {t: {k: sum(res[l][t][k] for l in res) / len(res) for k in ("attn", "mseK", "mseV")} for t in cbs}
         print("mean", json.dumps(mean), flush=True)
         json.dump({"args": vars(a), "per_layer": res, "mean": mean},
@@ -326,7 +377,9 @@ def main():
         return
     os.makedirs(f"{TRAIN}/{a.tag}", exist_ok=True)
     torch.backends.cuda.matmul.allow_tf32 = a.tf32
-    base = torch.load(BASE, weights_only=False)
+    base = torch.load(a.init or BASE, weights_only=False)
+    print("init", a.init or BASE, flush=True)
+    lag_ref = torch.load(a.lag_ref, weights_only=False) if a.nest_lag is not None else None
     rp = torch.load(f"{ACTS}/rope.pt")
     cos, sin = rp["cos"].cuda(), rp["sin"].cuda()
     t0 = time.time()
@@ -337,10 +390,10 @@ def main():
               flush=True)
         logf.write(json.dumps(r) + "\n"); logf.flush()
     print("heldout seqs", a.heldout, [meta["seqs"][i]["name"] for i in a.heldout], flush=True)
-    for l in range(*a.layers):
+    for l in (a.layer_list or range(*a.layers)):
         if os.path.exists(f"{TRAIN}/{a.tag}/L{l}.pt"):
             continue
-        run_layer(l, a, meta, base, cos, sin, log)
+        run_layer(l, a, meta, base, cos, sin, log, lag_ref)
     print("done", f"{time.time() - t0:.0f}s", flush=True)
 
 
