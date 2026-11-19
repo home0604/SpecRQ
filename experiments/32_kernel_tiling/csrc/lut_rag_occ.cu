@@ -12,7 +12,7 @@ namespace {
 template <int KST>
 std::vector<int64_t> occ_impl() {
   using L = Lay<KST>;
-  auto k = lut_rag_kernel<KST>;
+  auto k = lut_rag_kernel<KST, false>;  // ce9668d: LAZY template arg (false = original path)
   TORCH_CHECK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, L::total) == cudaSuccess, "smem");
   int nb = 0;
   TORCH_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nb, k, NW * 32, L::total) == cudaSuccess, "occ");

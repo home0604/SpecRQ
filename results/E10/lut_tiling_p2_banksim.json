@@ -1,0 +1,16 @@
+{
+ "lut_8B_current": 5.837845,
+ "lut_8B_random_bijective_swizzle": 5.84216,
+ "lut_8B_xor_swizzle_j5": 5.83833,
+ "lut_split_2x4B_tables": 6.30485,
+ "vcb_16B_current": 10.170275,
+ "lut_8B_zipf0.8_codes_current": 5.30391,
+ "lut_8B_zipf0.8_codes_random_swizzle": 5.535005,
+ "pred_k1_n131072_bh256": {
+  "smem_ld_wavefronts_M": 302.12611899392,
+  "bank_conflicts_M": 167.90839099392,
+  "ncu_wavefronts_M": 319.5,
+  "ncu_conflicts_M": 167.9
+ },
+ "note": "ideal: LUT 2 wavefronts / request (8B x 32 lanes), VCB 4 (16B x 32 lanes). Conflicts per token are independent of n and B*Hkv, so the layout cannot create a condition-dependent optimum."
+}
