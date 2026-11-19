@@ -69,7 +69,7 @@ Comparison with the MagicDec paper (PG-19, 32k, Llama-3.1-8B):
 ```bash
 git clone -b e7-a100 https://github.com/home0604/SpecRQ.git && cd SpecRQ
 scp shark:/data/lsh/handoff/specrq_e7_artifacts.tar* .      # 297 MB + sha256 (codebooks, prompts, PG-19, LongBench, raw tau/timing)
-scp shark:/data/lsh/handoff/specrq_e7_artifacts_v10.tar* .  # 27 MB + sha256: codebooks t12w_v2w03, e2ekl2b, e2ekl1b (2026-11-19)
+scp shark:/data/lsh/handoff/specrq_e7_artifacts_v10.tar* .  # 27 MB + sha256: codebooks t12w_v2w03, e2ekl2b, e2ekl1b, e2enkl_w10 (2026-11-19)
 bash tools/setup_server.sh <DATA_ROOT> <MODELS_ROOT> ./specrq_e7_artifacts.tar
 sha256sum -c specrq_e7_artifacts_v10.tar.sha256 && tar -xf specrq_e7_artifacts_v10.tar -C <DATA_ROOT>
 source .specrq_env; export TORCH_CUDA_ARCH_LIST=8.0          # A100 = sm_80 (code defaults to 8.9 via setdefault)
@@ -129,7 +129,7 @@ Steps:
    - Same AR kernels and graphs. Record the co-tenant check before and after each config.
 3. **τ at 64k/128k** (`tau_eval.py`, `lb_tau.py`): one 40GB GPU should fit 64k (16 GB weights + 8 GB KV + harness), run the two GPUs as two parallel τ jobs. 128k (16 GB KV) probably needs both GPUs or KV offload in the τ harness. Use `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (v6 32k τ OOMed without it on 24 GB).
 4. **Official MagicDec** (`experiments/27_magicdec_repro`): the same-hardware comparison is planned on shark's 4×4090 once GPUs 4–7 are free (env `/data/lsh/envs/magicdec` there). Its Table 3(c) uses 8×A100, which 2×A100 cannot match. On the A100, optionally run the official code at TP=2 with small B as a second same-hardware check.
-5. **Draft-specific codebook training:** done on shark (v6 layer-local attention loss, v9 nested, v10 end-to-end output KL, v11 nested KL in progress). Use the trained codebooks; no training is planned on the A100. For 1-bit use `e2ekl1b` (`--cbx`, as with t2w).
+5. **Draft-specific codebook training:** done on shark (v6 layer-local attention loss, v9 nested, v10 end-to-end output KL, v11 nested KL in progress). Use the trained codebooks; no training is planned on the A100. For 1-bit use `e2ekl1b` (`--cbx`, as with t2w). v11 nested KL `e2enkl_w10` = one codebook serving both: L1 τ ≈ e2ekl1b (0.975–1.012), L2 τ ≈ e2ekl2b (0.996–1.042); use it for the nested/load-adaptive story.
 6. **Kernel notes (low priority):** the VQ draft attention is LUT-based (q·codebook table, then gather over codes). At B16×32k TP4 it reads ~67 MB/layer/rank in ~80 µs (~0.84 TB/s, ~85% of 4090 peak) and is ~20% of the hybrid draft step, so INT8 tensor cores / INT8 codebooks would not help. Only fewer code bits (1-bit) cut its time; an INT8/FP8 LUT (fast-scan style) might give ≤10–15% of the kernel (≈1–3% end-to-end). On A100 (1.5 TB/s) re-check the bandwidth fraction.
 
 ## Working rules carried over (from the user)
