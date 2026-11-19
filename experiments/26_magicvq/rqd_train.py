@@ -21,6 +21,8 @@ the relative reconstruction error of the VQ-coded K and V in the original (de-st
 (= the positions some sampled query reads in VQ form; sinks and the R-window excluded as in the attention loss).
 --eval_cb TAG=PATH ...: diagnostic only, held-out attention-output loss and K/V MSE (both objectives) per layer for each
 codebook file (level / R as given); writes <CBDIR>/rqd_eval_<eval_tag>.json.
+--nest W (v8, level 2, tag t12w): nested-prefix objective W * attn_loss(stage 1 only) + attn_loss(stages 1+2), so one
+codebook serves the 1-bit prefix draft and the 2-bit draft (held-out rule on the same combined ratio).
 Usage: python experiments/26_magicvq/rqd_train.py --level 1 --R 128 --tag t1w --layers 0 8   (then --merge)
 """
 import argparse
@@ -74,13 +76,15 @@ class Q:
     def stats(self):
         return self.mu0 + self.sd0 * self.dmu, self.sd0 * self.lsd.exp()
 
-    def __call__(self, x):
-        """x [T, Hkv, D] fp32 (post-RoPE K or V) -> recon at `level` (differentiable wrt codewords, mu, sd)."""
+    def __call__(self, x, all_levels=False):
+        """x [T, Hkv, D] fp32 (post-RoPE K or V) -> recon at `level` (differentiable wrt codewords, mu, sd);
+        all_levels: list of the recons after stage 1 .. level (nested prefixes)."""
         T = x.shape[0]
         mu, sd = self.stats()
         xs = ((x - mu) / sd).permute(1, 0, 2).reshape(HKV, T * (D // d), d)  # [H, N, d]
         r = xs.detach().clone()
         acc = 0
+        outs = []
         for s in range(self.level):
             cb = self.cb[s]
             with torch.no_grad():
@@ -91,6 +95,10 @@ class Q:
             sel = torch.gather(cb, 1, c[..., None].expand(-1, -1, d))
             acc = acc + sel
             r = r - sel.detach()
+            if all_levels:
+                outs.append(acc.reshape(HKV, T, D).permute(1, 0, 2) * sd + mu)
+        if all_levels:
+            return outs
         y = acc.reshape(HKV, T, D).permute(1, 0, 2)
         return y * sd + mu
 
@@ -165,6 +173,15 @@ def run_layer(l, a, meta, base, cos, sin, log):
         qq = x["Q"].float() if qsel is None else x["Q"][qsel].float()
         q = rope(qq, cos[qp + off], sin[qp + off]) * scale
         with torch.set_grad_enabled(grad):
+            if a.nest is not None:  # v8: nested prefix loss  w * attn(stage 1) + attn(stages 1+2)  (same den)
+                Ks, Vs = qs[0](K, True), qs[1](V, True)
+                tot = 0.0
+                for s_, (Kh, Vh) in enumerate(zip(Ks, Vs)):
+                    Kh = torch.cat([K[:SINKS], Kh[SINKS:]])
+                    Vh = torch.cat([V[:SINKS], Vh[SINKS:]])
+                    n_, d_ = attn_err(q, qp, K, V, Kh, Vh, a.R, Wo)
+                    tot = tot + (a.nest if s_ == 0 else 1.0) * n_
+                return tot, d_
             Kh, Vh = qs[0](K), qs[1](V)
             Kh = torch.cat([K[:SINKS], Kh[SINKS:]])
             Vh = torch.cat([V[:SINKS], Vh[SINKS:]])
@@ -257,6 +274,8 @@ def merge(a):
     st.update({"cb": cb, "mu": mu, "sd": sd, "trained": {"tag": a.tag, "level": a.level, "R": a.R, "loss": a.loss,
                                                           "args": vars(a),
                                                           "per_layer": recs}})
+    if a.nest is not None:
+        st["trained"]["nest"] = a.nest
     torch.save(st, f"{CBDIR}/cb_d8K256x2_post_cn_{a.tag}.pt")
     json.dump({"args": vars(a), "per_layer": recs,
                "mean_before": sum(r["heldout_before"] for r in recs) / 32,
@@ -283,6 +302,8 @@ def main():
     ap.add_argument("--tf32", action="store_true")
     ap.add_argument("--merge", action="store_true")
     ap.add_argument("--loss", default="attn", choices=["attn", "mse"], help="v7: mse = K/V reconstruction control")
+    ap.add_argument("--nest", type=float, default=None, metavar="W",
+                    help="v8: nested prefix training (level 2): loss = W * attn(stage 1) + attn(stages 1+2)")
     ap.add_argument("--eval_cb", nargs="*", default=None, metavar="TAG=PATH", help="diagnostic held-out eval only")
     a = ap.parse_args()
     meta = json.load(open(f"{ACTS}/meta.json"))

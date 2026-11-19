@@ -79,10 +79,11 @@ def check_bf(M, use_idx):
     assert err < 0.03
 
 
-def check_vq_and_encode():
-    S = 2
+def check_vq_and_encode(S=2):
+    """S = 1: one-stage (1-bit) codes / LUT kernel template KST = 1 (v8)."""
+    print(f"-- VQ stages S = {S}")
     kvc = torch.randn(2, B, Hkv, T, D, device=dev).to(torch.bfloat16)
-    cb = torch.randn(2, Hkv, S, 256, 8, device=dev) * torch.tensor([1.0, 0.4], device=dev)[None, None, :, None, None]
+    cb = torch.randn(2, Hkv, S, 256, 8, device=dev) * torch.tensor([1.0, 0.4], device=dev)[None, None, :S, None, None]
     mu = torch.randn(2, Hkv, D, device=dev) * 0.3
     sd = torch.rand(2, Hkv, D, device=dev) + 0.5
     codes = torch.zeros(2, S, B, Hkv, T, 16, dtype=torch.uint8, device=dev)
@@ -173,5 +174,6 @@ if __name__ == "__main__":
         check_bf(M, False)
     check_bf(1, True)
     check_bf(3, True)
-    check_vq_and_encode()
+    check_vq_and_encode(2)
+    check_vq_and_encode(1)
     print("ALL OK")
