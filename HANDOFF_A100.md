@@ -38,6 +38,9 @@ Written 2026-11-18 on the original server ("shark", 8× RTX 4090 24GB). Goal on 
 | **v5** | **fully measured e2e**: real weights, prefill, compression, ragged static-batch decode | Decode speedup vs AR. syn_quote 32k B16: SnapKV 1.200×, RQ2+r128 1.399×, hybrid **1.510×**. hotpotqa_q 16k: SnapKV 0.937×, hybrid 1.134×. PG-19 32k: SnapKV **1.434×** > hybrid 1.320×. |
 | v6 | draft-specific RQ codebooks (layer-local attention-output loss, `rqd_*.py`; codebooks `pt1,pt1w,pt2,pt2w` in the artifact tar) | Trained 2-bit raises τ on every task (hyb ×1.03–1.16). Computed vs SnapKV, B16: syn_quote 32k 1.192×, hotpotqa_q 32k 1.140×, gov_report 32k 1.118× (was 1.01×), PG-19 32k 0.964× (was 0.895×). Trained 1-bit +18–89% τ but still < old 2-bit. **e2e-measured (v6e2e, `e2e_real.py --cbx t2w=<cb_d8K256x2_post_cn_t2w.pt>`, config `<draft>@t2w:<g>`)**: best VQ/hybrid ÷ best SnapKV, all-active measured, default → t2w: syn_quote 32k B16 1.115 → **1.165**, gen512 1.074 → 1.101, B8 1.066 → 1.108, hotpotqa_q 16k 1.020 → 1.058, PG-19 0.935 → 0.988 (`results/E7/llama8b_magicvq_v6e2e_tables.md`). Measured τ gain matches the v6 computed gain for RQ2, slightly lower for hybrid. |
 | v7 (`2bc678c`) | more benchmarks, t2w, all-active measured, best over γ/budget | VQ ÷ SnapKV: gov_report 16k 1.16, hotpotqa_q 16k 1.09, qmsum 16k 1.09, gov_report 32k B8 1.08, repobench-p 16k 1.04, PG-19 32k 1.00 (SnapKV γ6 measured). StreamingLLM-512 < SnapKV everywhere. LongBench SnapKV only γ≤4. `results/E7/llama8b_magicvq_v7_tables.md` |
+| v8 (`00c7bb2`) | 1-bit VQ KV draft (t1w), measured e2e | **NO-GO** on 4090: τ 80–86% of RQ2 on hard tasks; measured S 1-bit/RQ2 0.86–0.97 (draft step saves only ~1 ms of 11–12 ms). `results/E7/llama8b_magicvq_v8_1bit_*` |
+| v9 (`1d75911`) | nested prefix codebook (attention loss 0.3·L1+L2, warm start t2w) → `t12w_v2w03` | L2 τ = t2w (0.993–1.007); L1 τ 0.971–0.999 of dedicated t1w (cost mostly layer 1). `results/E7/llama8b_magicvq_v9_nest_tables.md` |
+| v10 (`132e184`) | end-to-end output-KL fine-tune of the codebooks (`rqd_e2e.py`) → `e2ekl2b` (L2), `e2ekl1b` (L1) | L2 τ vs t2w 0.988–1.016 (no gain). **L1 τ vs t1w +4–11%** on hard points (PG-19 +0–3%). 1-bit hyb γ6 τ is still 0.75–0.84 of 2-bit t2w (PG-19 0.94). `results/E7/llama8b_magicvq_v10_e2e_tables.md`. Codebooks in the supplement tar `specrq_e7_artifacts_v10.tar`. |
 | v7mse (`b6b929f`) | MSE-trained control codebook t2mw (same pipeline, `rqd_train.py --loss mse`) | aa t2w ÷ t2mw: syn_quote +0.4–1.1%, hotpotqa RQ2 +7.7%, PG-19 +6.5–8.0%; t2mw ÷ default +1.8–6.4%. Held-out: t2w attn loss 0.026 vs t2mw 0.045, but V MSE +46%. `results/E7/llama8b_magicvq_v7mse_tables.md` |
 | MagicDec official (done, `24476a1`) | `experiments/27_magicdec_repro`, `results/E7/llama8b_magicdec_official_tables.md` | Same PG-19 rows on 4×4090: our SnapKV τ within ~2% of official Ω. Official speedup B8 SnapKV-4097 γ3 1.30×, B16 SnapKV-513 γ3 1.54× vs ours 1.19×/1.22× (gen 80); the gap is batch accounting (official keeps every row generating), ours recomputed that way = 1.31×/1.53×. Official kernels 4–12% faster. Official B16 SnapKV-4097@32k OOMs on 24 GB. Env `/data/lsh/envs/magicdec25` (torch 2.5.1, flashinfer 0.1.6). |
 
@@ -66,7 +69,9 @@ Comparison with the MagicDec paper (PG-19, 32k, Llama-3.1-8B):
 ```bash
 git clone -b e7-a100 https://github.com/home0604/SpecRQ.git && cd SpecRQ
 scp shark:/data/lsh/handoff/specrq_e7_artifacts.tar* .      # 297 MB + sha256 (codebooks, prompts, PG-19, LongBench, raw tau/timing)
+scp shark:/data/lsh/handoff/specrq_e7_artifacts_v10.tar* .  # 27 MB + sha256: codebooks t12w_v2w03, e2ekl2b, e2ekl1b (2026-11-19)
 bash tools/setup_server.sh <DATA_ROOT> <MODELS_ROOT> ./specrq_e7_artifacts.tar
+sha256sum -c specrq_e7_artifacts_v10.tar.sha256 && tar -xf specrq_e7_artifacts_v10.tar -C <DATA_ROOT>
 source .specrq_env; export TORCH_CUDA_ARCH_LIST=8.0          # A100 = sm_80 (code defaults to 8.9 via setdefault)
 # if conda is not at /hai/anaconda3: export SPECRQ_CONDA_SH=<conda>/etc/profile.d/conda.sh
 ```
@@ -83,6 +88,22 @@ source .specrq_env; export TORCH_CUDA_ARCH_LIST=8.0          # A100 = sm_80 (cod
 - **NCCL.** On the 4090s, P2P hung, so all TP runs used `NCCL_P2P_DISABLE=1`. On A100 with NVLink, try P2P on first: it lowers the per-step all_reduce floor (~2–3 ms/step on 4090 PCIe). Record which one you used.
 
 ## A100 measurement plan (≥ 32k) — server has **2× A100 40GB** (user, 2026-11-18)
+
+### The key question (2026-11-19)
+
+As ctx grows, SnapKV's draft cost c → 0 (fixed budget), while the VQ draft's c → BPA/16 (2-bit 0.130, 1-bit 0.083). In the limit, VQ beats SnapKV only if τ_VQ/τ_SnapKV ≥ 1 + γ·c_VQ/v:
+
+| | γ4 | γ6 |
+|---|---|---|
+| RQ2 needs | 1.52 | 1.78 |
+| RQ1 needs | 1.33 | 1.50 |
+
+Measured SnapKV α (per-token acceptance) on shark falls slowly with ctx: gov_report 0.856 (16k) → 0.840 (32k); hotpotqa_q 16k 0.925, syn_quote 32k 0.925, PG-19 32k 0.954. VQ t2w α is 0.95–0.995. A rough calculation says SnapKV α must fall below ~0.75 for VQ to win in the limit. So the A100 run must answer: **how fast does SnapKV α (and τ) fall with ctx, per task, and does raising the SnapKV budget with ctx (4096 → 8192 → 16384) recover it?**
+
+Priority order:
+1. τ only (cheap, no timing): SnapKV {2048, 4096, 8192, 16384} vs RQ2 t2w (+r128 and hybrid) vs RQ1 e2ekl1b, at 32k / 64k / 128k, tasks syn_quote, hotpotqa_q, gov_report (where it reaches the length), PG-19. γ4 and γ6. Report α = derived from τ, τ_VQ/τ_SnapKV, and the break-even ratio above at the measured c.
+2. Measured c (step timing on empty GPUs) at the same points, to replace the asymptotic c.
+3. Full e2e (`e2e_real.py --accounting both`) only at points where step 1 shows VQ ahead or close.
 
 Memory budget:
 - bf16 KV of Llama-3.1-8B is 128 KB per token (32 layers × 8 kv-heads × 128 × K,V × 2 B).
@@ -108,7 +129,7 @@ Steps:
    - Same AR kernels and graphs. Record the co-tenant check before and after each config.
 3. **τ at 64k/128k** (`tau_eval.py`, `lb_tau.py`): one 40GB GPU should fit 64k (16 GB weights + 8 GB KV + harness), run the two GPUs as two parallel τ jobs. 128k (16 GB KV) probably needs both GPUs or KV offload in the τ harness. Use `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (v6 32k τ OOMed without it on 24 GB).
 4. **Official MagicDec** (`experiments/27_magicdec_repro`): the same-hardware comparison is planned on shark's 4×4090 once GPUs 4–7 are free (env `/data/lsh/envs/magicdec` there). Its Table 3(c) uses 8×A100, which 2×A100 cannot match. On the A100, optionally run the official code at TP=2 with small B as a second same-hardware check.
-5. **Draft-specific codebook training (v6 done, layer-local):** if more τ is needed (e.g. for 1-bit), the planned next objective is an end-to-end loss on the target's greedy token (cross-entropy or margin on top-1), not full KL. Greedy acceptance depends only on top-1 agreement.
+5. **Draft-specific codebook training:** done on shark (v6 layer-local attention loss, v9 nested, v10 end-to-end output KL, v11 nested KL in progress). Use the trained codebooks; no training is planned on the A100. For 1-bit use `e2ekl1b` (`--cbx`, as with t2w).
 6. **Kernel notes (low priority):** the VQ draft attention is LUT-based (q·codebook table, then gather over codes). At B16×32k TP4 it reads ~67 MB/layer/rank in ~80 µs (~0.84 TB/s, ~85% of 4090 peak) and is ~20% of the hybrid draft step, so INT8 tensor cores / INT8 codebooks would not help. Only fewer code bits (1-bit) cut its time; an INT8/FP8 LUT (fast-scan style) might give ≤10–15% of the kernel (≈1–3% end-to-end). On A100 (1.5 TB/s) re-check the bandwidth fraction.
 
 ## Working rules carried over (from the user)
