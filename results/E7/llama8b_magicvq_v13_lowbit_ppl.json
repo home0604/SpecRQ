@@ -1,0 +1,68 @@
+{
+ "c1k5": {
+  "tag": "c1k5",
+  "src": "/data/lsh/ckpts/weightvq/llama31_8b/c1ft5_k5_dense/w_bf16.safetensors",
+  "norms_from_c1": "",
+  "ppl_4096": {
+   "wikitext2": 6.99503755569458,
+   "c4": 10.141801834106445
+  },
+  "dtype": "bf16 nn.Linear",
+  "wall_s": 271.6501569747925
+ },
+ "g3": {
+  "tag": "g3",
+  "src": "/data/lsh/ckpts/weightvq/llama31_8b/gptq3_g128_pile128x2048_dense/w_fp16.safetensors",
+  "norms_from_c1": "",
+  "ppl_4096": {
+   "wikitext2": 8.840581893920898,
+   "c4": 12.526128768920898
+  },
+  "dtype": "bf16 nn.Linear",
+  "wall_s": 200.25158381462097
+ },
+ "c1k3": {
+  "tag": "c1k3",
+  "src": "/data/lsh/ckpts/weightvq/llama31_8b/c1ft5_k3_dense/w_bf16.safetensors",
+  "norms_from_c1": "",
+  "ppl_4096": {
+   "wikitext2": 9.924214363098145,
+   "c4": 13.53467845916748
+  },
+  "dtype": "bf16 nn.Linear",
+  "wall_s": 256.1594512462616
+ },
+ "c1k2": {
+  "tag": "c1k2",
+  "src": "/data/lsh/ckpts/weightvq/llama31_8b/c1ft5_k2_dense/w_bf16.safetensors",
+  "norms_from_c1": "",
+  "ppl_4096": {
+   "wikitext2": 537.2073364257812,
+   "c4": 101.51831817626953
+  },
+  "dtype": "bf16 nn.Linear",
+  "wall_s": 201.70217728614807
+ },
+ "c1k2B": {
+  "tag": "c1k2B",
+  "src": "/data/lsh/ckpts/weightvq/llama31_8b/c1ft5_k2B_dense/w_bf16.safetensors",
+  "norms_from_c1": "",
+  "ppl_4096": {
+   "wikitext2": 13.237262725830078,
+   "c4": 17.74924087524414
+  },
+  "dtype": "bf16 nn.Linear",
+  "wall_s": 205.48871564865112
+ },
+ "g2": {
+  "tag": "g2",
+  "src": "/data/lsh/ckpts/weightvq/llama31_8b/gptq2_g128_pile128x2048_dense/w_fp16.safetensors",
+  "norms_from_c1": "",
+  "ppl_4096": {
+   "wikitext2": 5490.1669921875,
+   "c4": 4968.455078125
+  },
+  "dtype": "bf16 nn.Linear",
+  "wall_s": 198.21796917915344
+ }
+}

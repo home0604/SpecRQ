@@ -1,0 +1,24 @@
+{
+ "bf16": {
+  "tag": "bf16",
+  "src": "bf16",
+  "norms_from_c1": "",
+  "ppl_4096": {
+   "wikitext2": 6.753390789031982,
+   "c4": 9.750466346740723
+  },
+  "dtype": "bf16 nn.Linear",
+  "wall_s": 210.75857543945312
+ },
+ "w4": {
+  "tag": "w4",
+  "src": "/data/lsh/ckpts/weightvq/llama31_8b/int4_marlin_gptq_g128_pile128x2048_dense/w_fp16.safetensors",
+  "norms_from_c1": "",
+  "ppl_4096": {
+   "wikitext2": 7.146548748016357,
+   "c4": 10.384050369262695
+  },
+  "dtype": "bf16 nn.Linear",
+  "wall_s": 258.123743057251
+ }
+}
