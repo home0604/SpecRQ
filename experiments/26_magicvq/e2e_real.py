@@ -753,6 +753,7 @@ def main():
     rec = {"args": vars(a), "world": WORLD, "nvsmi_apps_start": nvsmi_apps(), "cotenants_start": cot(),
            "co_start": cocheck(own)}
     rec["lut_lazy_max"] = EK.LAZY_MAX
+    rec["lut_variant"] = getattr(EK, "LUT_VARIANT", None)  # E10 p3: MV_LUT_VARIANT (None/"" = original kernel)
     log("co-tenants at start:", rec["cotenants_start"] or "none")
     prompts = json.load(open(f"{OUT}/prompts_{a.task}_ctx{a.ctx}.json"))[a.skip:a.skip + a.B]
     assert len(prompts) == a.B, len(prompts)
@@ -885,6 +886,7 @@ def main():
         (x.get("co_before") or {}).get("cotenant") or (x.get("co_after") or {}).get("cotenant")
         for x in rec["configs"].values()))
     rec["wall_s"] = time.time() - t0
+    rec["lut_variant_info"] = {str(k): v for k, v in getattr(EK, "LUT_VARIANT_INFO", {}).items()}
     if RANK == 0:
         json.dump(rec, open(f"{OUT}/run_{a.tag}_{a.task}_ctx{a.ctx}_B{a.B}.json", "w"))
     log("done", f"{time.time() - t0:.0f}s, co-tenants at end:", rec["cotenants_end"] or "none")
