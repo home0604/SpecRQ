@@ -65,6 +65,7 @@ SINKS, WIN = 16, 32
 RANK, WORLD = 0, 1
 LEGACY_T = False  # --legacy_T (reproduce the pre-fix cache length)
 SOFT_REP = False  # v7: --soft_rep_check
+DRAFT_FWD = None  # v14: --draft_w4 -> Marlin INT4 draft forward (e2e_w4.make_forward); None = bf16 `forward`
 HEADN = 32  # rep-mismatch fix: first HEADN cache positions of every (layer, k/v, seq, kv-head) are snapshotted after
 #             prefill and compared after every config (an out-of-range append wraps into the next head's sinks)
 
@@ -578,7 +579,7 @@ def run_spec(m, st, draft, gamma, reps, modes=("static",)):
         for j in range(gamma):
             a = dsteps[j]
             a.prep(st.length)
-            dtok[:, j + 1].copy_(forward(m, dtok[:, j], a))
+            dtok[:, j + 1].copy_((DRAFT_FWD or forward)(m, dtok[:, j], a))
 
     def verify_fn():
         va.prep(st.length)
@@ -711,7 +712,7 @@ def run_spec(m, st, draft, gamma, reps, modes=("static",)):
 
 # ------------------------------------------------------------------------------------------------------------- main
 def main():
-    global RANK, WORLD, SOFT_REP, LEGACY_T
+    global RANK, WORLD, SOFT_REP, LEGACY_T, DRAFT_FWD
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
     ap.add_argument("--ctx", type=int, required=True)
@@ -734,6 +735,8 @@ def main():
     ap.add_argument("--legacy_T", action="store_true",
                     help="reproduce the pre-fix cache length T = ceil64(Pmax + gen + gmax + 2) (static-mode frozen rows "
                          "then write up to Pmax + gen + 2 gamma >= T at gamma 6 -> wrap into the next head's sinks)")
+    ap.add_argument("--draft_w4", default=None, metavar="MARLIN_DIR",
+                    help="v14: draft linears as Marlin INT4 shards from MARLIN_DIR (e2e_w4.py); verify stays bf16")
     a = ap.parse_args()
     if a.lazy_max:
         EK.LAZY_MAX = True
@@ -757,6 +760,14 @@ def main():
     m = Shard()
     torch.cuda.synchronize()
     log(f"weights loaded {time.time() - t0:.0f}s, alloc {torch.cuda.memory_allocated() / 2**30:.2f} GiB")
+    rec["draft_w4"] = None
+    if a.draft_w4:  # v14
+        import e2e_w4
+        w4 = e2e_w4.W4(a.draft_w4, RANK, WORLD, NL, D, HQA, HKVA, INTER)
+        DRAFT_FWD = e2e_w4.make_forward(sys.modules[__name__], w4)
+        rec["draft_w4"] = w4.info()
+        torch.cuda.synchronize()
+        log(f"draft INT4 (Marlin) loaded: {w4.gib:.2f} GiB/rank, alloc {torch.cuda.memory_allocated() / 2**30:.2f} GiB")
     gammas = [int(c.split(":")[1]) for c in a.configs if c != "ar"]
     gmax = max(gammas + [1])
     P_list = [p["P"] for p in prompts]
